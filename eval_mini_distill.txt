@@ -1,0 +1,43 @@
+classes          IoU
+----------------------------
+barrier       : 0.082   ( 40803/498885)
+bicycle       : 0.000   (     0/1463  )
+bus           : 0.690   ( 60609/87790 )
+car           : 0.725   (407592/562343)
+construction vehicle: 0.389   ( 28773/73958 )
+motorcycle    : 0.102   (   845/8322  )
+person        : 0.358   ( 17221/48058 )
+traffic cone  : 0.098   (   771/7835  )
+trailer       : 0.025   (   748/30156 )
+truck         : 0.639   (261220/408631)
+drivable surface: 0.744   (3765495/5062654)
+other flat    : 0.000   (     0/150159)
+sidewalk      : 0.120   (101412/846712)
+terrain       : 0.254   (278778/1099139)
+manmade       : 0.703   (1637304/2328213)
+vegetation    : 0.740   (1234472/1668251)
+Mean IoU 0.35429871708168703
+Mean Acc 0.48139552359448806
+
+
+Evaluation 1 out of 1 runs...
+
+  0%|                                                                                     | 0/10 [00:00<?, ?it/s][TIMING] Load 3D .pth: 0.09s | points=1,354,112 | path=data/nuscenes_3d/val/scene-0061.pth
+[TIMING] Load fused .pt: 0.78s | feat=torch.Size([967577, 768]) mask=(1354112,)
+[TIMING] Expand features: 0.50s | feat_3d=torch.Size([1354112, 768]) (2.08 GB)
+[TIMING] Pre-voxelization prep: 0.50s (total so far: 1.36s)
+[TIMING] Voxelization done: 0.69s | voxels=791,265 from 1,354,112 points | feat_3d=torch.Size([791265, 768])
+[TIMING] Total __getitem__: 2.06s | coords=torch.Size([791265, 4]) feat_3d=torch.Size([791265, 768]) labels=torch.Size([1354112])
+
+[EVAL] Scene 0: coords=torch.Size([791265, 4]) feat_3d=torch.Size([791265, 768]) label=torch.Size([1354112]) inds_reverse=torch.Size([1354112])
+[EVAL] SparseTensor + coord expand: 0.01s
+ 10%|███████▋                                                                     | 1/10 [00:06<00:58,  6.51s/it][TIMING] Load 3D .pth: 0.09s | points=1,388,928 | path=data/nuscenes_3d/val/scene-0103.pth
+[TIMING] Load fused .pt: 1.40s | feat=torch.Size([996895, 768]) mask=(1388928,)
+[TIMING] Expand features: 0.38s | feat_3d=torch.Size([1388928, 768]) (2.13 GB)
+[TIMING] Pre-voxelization prep: 0.38s (total so far: 1.88s)
+[TIMING] Voxelization done: 0.67s | voxels=852,513 from 1,388,928 points | feat_3d=torch.Size([852513, 768])
+[TIMING] Total __getitem__: 2.55s | coords=torch.Size([852513, 4]) feat_3d=torch.Size([852513, 768]) labels=torch.Size([1388928])
+
+[EVAL] Scene 1: coords=torch.Size([852513, 4]) feat_3d=torch.Size([852513, 768]) label=torch.Size([1388928]) inds_reverse=torch.Size([1388928])
+[EVAL] SparseTensor + coord expand: 0.02s
+ 20%|███████████████▍                                                             | 2/10 [00:13<00:54,  6.85s/it]

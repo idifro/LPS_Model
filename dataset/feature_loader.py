@@ -1,11 +1,15 @@
 '''Dataloader for fused point features.'''
 
 import copy
+import time
+import logging
 from glob import glob
 from os.path import join
 import torch
 import numpy as np
 import SharedArray as SA
+
+logger = logging.getLogger("main-logger")
 
 from dataset.point_loader import Point3DLoader
 
@@ -61,6 +65,8 @@ class FusedFeatureLoader(Point3DLoader):
     def __getitem__(self, index_long):
 
         index = index_long % len(self.data_paths)
+        t_start = time.time()
+
         if self.use_shm:
             locs_in = SA.attach("shm://%s_%s_%06d_locs_%08d" % (
                 self.dataset_name, self.split, self.identifier, index)).copy()
@@ -77,6 +83,10 @@ class FusedFeatureLoader(Point3DLoader):
                 feats_in = np.zeros_like(locs_in)
             else:
                 feats_in = (feats_in + 1.) * 127.5
+
+        t_load_3d = time.time()
+        print(f"[TIMING] Load 3D .pth: {t_load_3d - t_start:.2f}s | "
+              f"points={locs_in.shape[0]:,} | path={self.data_paths[index]}")
 
         # load 3D features
         if self.dataset_name == 'scannet_3d':
@@ -99,6 +109,10 @@ class FusedFeatureLoader(Point3DLoader):
             # no repeated file
             processed_data = torch.load(join(self.datapath_feat, scene_name+'.pt'))
 
+        t_load_feat = time.time()
+        print(f"[TIMING] Load fused .pt: {t_load_feat - t_load_3d:.2f}s | "
+              f"feat={processed_data['feat'].shape} mask={processed_data['mask_full'].shape}")
+
         flag_mask_merge = False
         if len(processed_data.keys())==2:
             flag_mask_merge = True
@@ -111,6 +125,9 @@ class FusedFeatureLoader(Point3DLoader):
                 feat_3d_new[mask] = feat_3d
                 feat_3d = feat_3d_new
                 mask_chunk = torch.ones_like(mask_chunk) # every point needs to be evaluted
+                t_expand = time.time()
+                print(f"[TIMING] Expand features: {t_expand - t_load_feat:.2f}s | "
+                      f"feat_3d={feat_3d.shape} ({feat_3d.nelement()*feat_3d.element_size()/1e9:.2f} GB)")
         elif len(processed_data.keys())>2: # legacy, for old processed features
             feat_3d, mask_visible, mask_chunk = processed_data['feat'], processed_data['mask'], processed_data['mask_full']
             mask = torch.zeros(feat_3d.shape[0], dtype=torch.bool)
@@ -120,6 +137,9 @@ class FusedFeatureLoader(Point3DLoader):
             feat_3d = feat_3d[..., 0]
 
         locs = self.prevoxel_transforms(locs_in) if self.aug else locs_in
+
+        t_pre_vox = time.time()
+        print(f"[TIMING] Pre-voxelization prep: {t_pre_vox - t_load_feat:.2f}s (total so far: {t_pre_vox - t_start:.2f}s)")
 
         # calculate the corresponding point features after voxelization
         if self.split == 'train' and flag_mask_merge:
@@ -173,6 +193,10 @@ class FusedFeatureLoader(Point3DLoader):
 
         if self.eval_all: # during evaluation, no voxelization for GT labels
             labels = labels_in
+        t_post_vox = time.time()
+        print(f"[TIMING] Voxelization done: {t_post_vox - t_pre_vox:.2f}s | "
+              f"voxels={locs.shape[0]:,} from {locs_in.shape[0]:,} points | "
+              f"feat_3d={feat_3d.shape}")
         if self.aug:
             locs, feats, labels = self.input_transforms(locs, feats, labels)
         coords = torch.from_numpy(locs).int()
@@ -183,6 +207,10 @@ class FusedFeatureLoader(Point3DLoader):
             # hack: directly use color=(1, 1, 1) for all points
             feats = torch.ones(coords.shape[0], 3)
         labels = torch.from_numpy(labels).long()
+
+        t_end = time.time()
+        print(f"[TIMING] Total __getitem__: {t_end - t_start:.2f}s | "
+              f"coords={coords.shape} feat_3d={feat_3d.shape} labels={labels.shape}")
 
         if self.eval_all:
             return coords, feats, labels, feat_3d, mask, torch.from_numpy(inds_reconstruct).long()

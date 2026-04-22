@@ -332,6 +332,7 @@ def distill(train_loader, model, optimizer, epoch):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        torch.cuda.empty_cache()
 
         loss_meter.update(loss.item(), args.batch_size)
         batch_time.update(time.time() - end)

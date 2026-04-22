@@ -1,0 +1,1607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>openscene_panoptic_ablation — Implementation Reference</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
+:root{
+  --bg:#080d18;--bg2:#0e1424;--bg3:#151e30;--bg4:#1c2840;
+  --border:#1a2640;--border2:#253550;
+  --text:#dce8f8;--text2:#8099b8;--text3:#3d5070;
+  --pu:#a78bfa;--pud:#7c3aed;--pub:#130d2a;--pus:#2a1b55;
+  --te:#34d399;--ted:#059669;--teb:#071a12;--tes:#0a3020;
+  --am:#fbbf24;--amd:#d97706;--amb:#1a1200;--ams:#3a2800;
+  --co:#f87171;--cod:#dc2626;--cob:#180808;
+  --bl:#60a5fa;--bld:#2563eb;--blb:#06111e;
+  --mono:'JetBrains Mono',monospace;
+  --sans:'DM Sans',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);font-size:13.5px;line-height:1.65;min-height:100vh}
+
+/* NAV */
+.nav{background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:200;display:flex;align-items:stretch}
+.brand{padding:0 20px;border-right:1px solid var(--border);display:flex;align-items:center;gap:10px;min-width:180px}
+.brand-dot{width:8px;height:8px;border-radius:50%;background:var(--pu)}
+.brand-name{font-size:11px;font-weight:600;color:var(--text);letter-spacing:.02em}
+.brand-sub{font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:1px}
+.tabs{display:flex;overflow-x:auto;flex:1}
+.tab{padding:0 16px;font-size:11.5px;font-weight:500;color:var(--text3);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent;transition:.12s;white-space:nowrap;display:flex;align-items:center;gap:5px}
+.tab:hover{color:var(--text);background:var(--bg3)}
+.tab.on{color:var(--pu);border-bottom-color:var(--pu);background:var(--pub)}
+.tab-n{font-family:var(--mono);font-size:9px;opacity:.5}
+
+/* PAGES */
+.page{display:none}.page.on{display:block}
+.wrap{max-width:940px;margin:0 auto;padding:36px 28px}
+
+/* TYPE */
+h1{font-size:24px;font-weight:600;letter-spacing:-.02em;margin-bottom:6px}
+h2{font-size:16px;font-weight:600;margin:32px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+h3{font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.07em;margin:20px 0 8px}
+p{font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.75}
+strong{color:var(--text);font-weight:500}
+code{font-family:var(--mono);font-size:11.5px;color:var(--bl);background:var(--blb);padding:1px 5px;border-radius:3px}
+.lead{font-size:14px;color:var(--text2);line-height:1.8;margin-bottom:20px}
+
+/* BADGES */
+.badge{font-size:10px;font-family:var(--mono);padding:2px 8px;border-radius:20px;font-weight:500;display:inline-block;margin:2px}
+.bp{background:var(--pub);color:var(--pu);border:1px solid var(--pus)}
+.bt{background:var(--teb);color:var(--te);border:1px solid var(--tes)}
+.ba{background:var(--amb);color:var(--am);border:1px solid var(--ams)}
+.bc{background:var(--cob);color:var(--co);border:1px solid #3a1010}
+.bb{background:var(--blb);color:var(--bl);border:1px solid #0e2540}
+
+/* CARDS */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px 18px;margin-bottom:12px}
+.card-t{font-size:12.5px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:7px}
+.card-b{font-size:12.5px;color:var(--text2);line-height:1.7}
+.card.pu{border-color:var(--pus);background:var(--pub)}
+.card.te{border-color:var(--tes);background:var(--teb)}
+.card.am{border-color:var(--ams);background:var(--amb)}
+.card.co{border-color:#3a1010;background:var(--cob)}
+.card.bl{border-color:#0e2540;background:var(--blb)}
+
+/* GRID */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+
+/* CODE */
+.cw{background:#020508;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin:12px 0}
+.ch{background:var(--bg3);border-bottom:1px solid var(--border);padding:7px 14px;display:flex;align-items:center;justify-content:space-between}
+.cf{font-family:var(--mono);font-size:10.5px;color:var(--pu)}
+.cl2{font-family:var(--mono);font-size:9.5px;color:var(--text3)}
+.cbtn{font-family:var(--mono);font-size:9.5px;color:var(--text3);background:none;border:1px solid var(--border2);border-radius:3px;padding:2px 7px;cursor:pointer;transition:.1s}
+.cbtn:hover{color:var(--text)}
+pre{padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:12px;line-height:1.7;color:#c5d8f0;tab-size:4}
+.kw{color:#ff7b72}.fn{color:#d2a8ff}.st{color:#a5d6ff}.cm{color:#3d5070;font-style:italic}
+.nm{color:#79c0ff}.nb{color:#ffa657}.dec{color:#e3b341}
+
+/* CALLOUTS */
+.note{border-radius:6px;padding:12px 16px;margin:12px 0;display:flex;gap:10px;font-size:12.5px}
+.ni{flex-shrink:0;width:17px;height:17px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;margin-top:1px}
+.nb2{color:var(--text2);line-height:1.65}
+.nb2 strong{color:var(--text)}
+.note.info{background:var(--blb);border:1px solid #0e2540}.note.info .ni{background:var(--bl);color:#020508}
+.note.warn{background:var(--amb);border:1px solid var(--ams)}.note.warn .ni{background:var(--am);color:#020508}
+.note.ok{background:var(--teb);border:1px solid var(--tes)}.note.ok .ni{background:var(--te);color:#020508}
+.note.danger{background:var(--cob);border:1px solid #3a1010}.note.danger .ni{background:var(--co);color:#020508}
+
+/* TABLES */
+table{width:100%;border-collapse:collapse;font-size:12px;margin:12px 0}
+th{background:var(--bg3);padding:8px 11px;text-align:left;font-size:10.5px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border)}
+td{padding:8px 11px;border-bottom:1px solid var(--border);color:var(--text2);vertical-align:top;line-height:1.6}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--bg3)}
+td.g{color:var(--te)}td.b{color:var(--co)}td.w{color:var(--am)}td.c{font-family:var(--mono);font-size:11px;color:var(--bl)}
+
+/* FORMULA */
+.fbox{background:var(--pub);border:1px solid var(--pus);border-radius:7px;padding:14px 18px;margin:10px 0}
+.flab{font-size:9.5px;font-weight:600;color:var(--pu);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px}
+.fcode{font-family:var(--mono);font-size:12px;color:#c4b5fd;line-height:2;white-space:pre}
+.fnote{font-size:11px;color:var(--text3);margin-top:8px;font-family:var(--mono)}
+
+/* STATS */
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+.stat{background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:12px 16px}
+.sl{font-size:9.5px;color:var(--text3);font-family:var(--mono);margin-bottom:3px}
+.sv{font-size:20px;font-weight:600;font-family:var(--mono);color:var(--text)}
+.ss{font-size:9.5px;color:var(--text3);margin-top:2px}
+
+/* TIMELINE */
+.tl{position:relative;padding-left:26px}
+.tl::before{content:'';position:absolute;left:5px;top:0;bottom:0;width:1px;background:var(--border)}
+.tli{position:relative;margin-bottom:24px}
+.tli::before{content:'';position:absolute;left:-24px;top:5px;width:9px;height:9px;border-radius:50%;border:1.5px solid var(--border);background:var(--bg)}
+.tli.done::before{background:var(--te);border-color:var(--te)}
+.tli.now::before{background:var(--pu);border-color:var(--pu);box-shadow:0 0 0 3px var(--pub)}
+.tli.ms::before{background:var(--am);border-color:var(--am);width:12px;height:12px;left:-25px;top:3px}
+.tw{font-size:9.5px;font-family:var(--mono);color:var(--text3);margin-bottom:3px}
+.tt{font-size:13.5px;font-weight:600;color:var(--text);margin-bottom:5px}
+.tb2{font-size:12px;color:var(--text2);line-height:1.7}
+.tl-ul{margin-top:6px;list-style:none}
+.tl-ul li{font-size:11.5px;color:var(--text2);padding:2px 0;display:flex;gap:7px}
+.tl-ul li::before{content:'→';color:var(--text3);font-family:var(--mono);flex-shrink:0}
+.ms-box{background:var(--amb);border:1px solid var(--ams);border-radius:5px;padding:9px 13px;margin:7px 0}
+.ms-box.ok{background:var(--teb);border-color:var(--tes)}
+.ms-t{font-size:12.5px;font-weight:600;color:var(--am)}
+.ms-box.ok .ms-t{color:var(--te)}
+.ms-b{font-size:11.5px;color:var(--text2);margin-top:3px}
+
+/* CHECKLIST */
+.cl3{list-style:none}
+.cl3 li{display:flex;align-items:flex-start;gap:9px;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2);cursor:pointer}
+.cl3 li:last-child{border-bottom:none}
+.cl3 li.done{color:var(--text3);text-decoration:line-through}
+.ckb{width:15px;height:15px;border:1px solid var(--border2);border-radius:3px;flex-shrink:0;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.cl3 li.done .ckb{background:var(--teb);border-color:var(--te)}
+.ckm{display:none;color:var(--te);font-size:9px;font-weight:700}
+.cl3 li.done .ckm{display:block}
+
+/* STEP TABS */
+.stabs{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px}
+.stab{font-size:11px;padding:5px 12px;border-radius:5px;cursor:pointer;border:1px solid var(--border);background:var(--bg2);color:var(--text3);transition:.12s;font-weight:500}
+.stab.on{background:var(--pub);color:var(--pu);border-color:var(--pus)}
+.sp{display:none}.sp.on{display:block}
+
+/* ABLATION TABLE */
+.abl{border-collapse:collapse;width:100%}
+.abl th{background:var(--bg4);padding:9px 12px;font-size:10.5px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;border:1px solid var(--border)}
+.abl td{padding:9px 12px;border:1px solid var(--border);font-size:12px;color:var(--text2);vertical-align:middle}
+.abl tr.best td{background:rgba(52,211,153,.06)}
+.abl .row-a{background:rgba(167,139,250,.04)}
+.arow{font-size:10px;font-family:var(--mono);color:var(--pu);font-weight:600;margin-bottom:2px}
+
+/* RISK */
+.risk{border-left:3px solid var(--border);padding-left:13px;margin-bottom:14px}
+.risk.ok{border-left-color:var(--te)}.risk.w{border-left-color:var(--am)}.risk.bad{border-left-color:var(--co)}
+.rt{font-size:12.5px;font-weight:600;margin-bottom:3px}
+.risk.ok .rt{color:var(--te)}.risk.w .rt{color:var(--am)}.risk.bad .rt{color:var(--co)}
+.rb{font-size:12px;color:var(--text2);line-height:1.65}
+
+@media(max-width:720px){.g2,.g3{grid-template-columns:1fr}.wrap{padding:16px 14px}}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <div class="brand">
+    <div class="brand-dot"></div>
+    <div>
+      <div class="brand-name">openscene_panoptic_ablation</div>
+      <div class="brand-sub">Phase A · OpenSeg backbone</div>
+    </div>
+  </div>
+  <div class="tabs">
+    <button class="tab on" onclick="go('overview',this)"><span class="tab-n">01</span>Overview</button>
+    <button class="tab" onclick="go('setup',this)"><span class="tab-n">02</span>Setup</button>
+    <button class="tab" onclick="go('maskpls',this)"><span class="tab-n">03</span>MaskPLS smoke test</button>
+    <button class="tab" onclick="go('arch',this)"><span class="tab-n">04</span>Architecture</button>
+    <button class="tab" onclick="go('swap',this)"><span class="tab-n">05</span>Backbone swap</button>
+    <button class="tab" onclick="go('cliphead',this)"><span class="tab-n">06</span>CLIP token head</button>
+    <button class="tab" onclick="go('camera',this)"><span class="tab-n">07</span>Camera layer</button>
+    <button class="tab" onclick="go('train',this)"><span class="tab-n">08</span>Training pipeline</button>
+    <button class="tab" onclick="go('inference',this)"><span class="tab-n">09</span>Inference</button>
+    <button class="tab" onclick="go('ablation',this)"><span class="tab-n">10</span>Ablation &amp; timeline</button>
+  </div>
+</nav>
+
+<!-- ====== PAGE: OVERVIEW ====== -->
+<div id="page-overview" class="page on"><div class="wrap">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+    <span class="badge bp">openscene_panoptic_ablation</span>
+    <span class="badge bt">Phase A · MaskPLS + OpenSeg backbone</span>
+    <span class="badge ba">Apr 2 → Jun 20</span>
+  </div>
+  <h1>openscene_panoptic_ablation</h1>
+  <p class="lead">Two named plans exist in this thesis. This document covers <strong>openscene_panoptic_ablation</strong>: supervised panoptic segmentation using a frozen OpenScene backbone (OpenSeg-distilled MinkUNet) with a MaskPLS-style mask-transformer decoder, extended with a CLIP token head for text-guided classification and camera cross-attention as the novel contribution.<br><br>The companion plan, <strong>segment_all_filter_text</strong>, covers the SAL pseudo-label pipeline — unsupervised training from raw camera+LiDAR data. Both share the same inference logic at the end: produce all masks first, filter with text.</p>
+
+  <h2>How this relates to segment_all_filter_text</h2>
+  <table>
+    <tr><th>Dimension</th><th>openscene_panoptic_ablation (this doc)</th><th>segment_all_filter_text</th></tr>
+    <tr><td>Training supervision</td><td class="g">GT nuScenes panoptic labels</td><td class="w">SAM2 pseudo-labels (no GT)</td></tr>
+    <tr><td>Backbone</td><td>OpenScene pretrained (OpenSeg-distilled, frozen)</td><td>MinkUNet, trained via CLIP distillation</td></tr>
+    <tr><td>Decoder source</td><td>MaskPLS adapted</td><td>MaskPLS or SAL-style</td></tr>
+    <tr><td>CLIP token targets</td><td>GT class → text prototype</td><td>MaskCLIP per-mask image embeddings</td></tr>
+    <tr><td>Camera role</td><td>Cross-attention in decoder (train + inference)</td><td>Offline pseudo-label generation only</td></tr>
+    <tr><td>Expected PQ</td><td class="g">~55–65 (supervised)</td><td class="w">~41–52 (zero-shot)</td></tr>
+    <tr><td>Inference</td><td colspan="2" class="g">Identical: all masks → CLIP token → cosine sim with text → filter</td></tr>
+    <tr><td>When to run</td><td class="g">Now (Phase A) — before mid-term</td><td>Weeks 9–11 (Phase 5)</td></tr>
+  </table>
+
+  <h2>Four-step build sequence</h2>
+  <div class="g2">
+    <div class="card pu">
+      <div class="card-t"><span style="font-family:var(--mono);color:var(--pu)">STEP 1</span> MaskPLS smoke test on nuScenes mini</div>
+      <div class="card-b">Clone MaskPLS. Write nuScenes panoptic dataloader. Run one training epoch on 10 mini scenes. Verify loss decreases, masks appear. Eval PQ on mini val. This validates the dataloader, matcher, and eval pipeline before touching anything else. <strong>~2–3 days.</strong></div>
+    </div>
+    <div class="card pu">
+      <div class="card-t"><span style="font-family:var(--mono);color:var(--pu)">STEP 2</span> Backbone swap → OpenScene</div>
+      <div class="card-b">Remove MaskPLS's MinkUNet backbone. Load OpenScene pretrained weights. Check feature dimension (run inspection script). Add adapter Linear(openseg_dim → 256). Verify forward pass produces same-shaped decoder output. <strong>~1 day.</strong></div>
+    </div>
+    <div class="card te">
+      <div class="card-t"><span style="font-family:var(--mono);color:var(--te)">STEP 3</span> CLIP token head + text supervision</div>
+      <div class="card-b">Add 3-layer MLP on decoder output predicting 768-d CLIP embedding per query. Wire L_token = cosine distance to class text prototype. Pre-compute 16 nuScenes class prototypes. This enables text-guided classification at inference. <strong>~1 day.</strong></div>
+    </div>
+    <div class="card te">
+      <div class="card-t"><span style="font-family:var(--mono);color:var(--te)">STEP 4</span> Camera cross-attention (novel contribution)</div>
+      <div class="card-b">Add camera cross-attention block in each decoder layer. Extract CLIP ViT-L/14 patch features from 6 nuScenes cameras. Active at both training and inference. This improves RQ (classification quality) — the identified SAL bottleneck. <strong>~2–3 days.</strong></div>
+    </div>
+  </div>
+
+  <h2>The inference philosophy (same for both plans)</h2>
+  <div class="card bl">
+    <div class="card-t" style="color:var(--bl)">segment_all → filter_with_text</div>
+    <div class="card-b">The model <strong>never uses text to segment</strong>. Segmentation is purely geometry-driven. The model finds every plausible segment in the scene regardless of class. Each segment then gets a predicted CLIP token (768-d vector in CLIP space). At inference, you provide text prompts → encode with CLIP text encoder → cosine similarity with predicted tokens → filter or label. You can change the vocabulary without retraining. You can ask for "ambulance" even though the model never saw that label.</div>
+  </div>
+</div></div>
+
+<!-- ====== PAGE: SETUP ====== -->
+<div id="page-setup" class="page"><div class="wrap">
+  <h1>Environment setup</h1>
+  <div class="stats">
+    <div class="stat"><div class="sl">cluster</div><div class="sv" style="font-size:14px">DLP HPC</div><div class="ss">LSF scheduler (bsub)</div></div>
+    <div class="stat"><div class="sl">GPU</div><div class="sv" style="font-size:14px">A100 96 GB</div><div class="ss">exclusive_process, no MPS</div></div>
+    <div class="stat"><div class="sl">CPU</div><div class="sv" style="font-size:14px">4 cores</div><div class="ss">32 GB total RAM</div></div>
+    <div class="stat"><div class="sl">voxel size</div><div class="sv" style="font-size:14px">0.05 m</div><div class="ss">matches OpenScene ckpt training</div></div>
+    <div class="stat"><div class="sl">workers</div><div class="sv" style="font-size:14px">0</div><div class="ss">mandatory on this cluster</div></div>
+    <div class="stat"><div class="sl">d_clip</div><div class="sv" style="font-size:14px">768</div><div class="ss">OpenSeg variant confirmed</div></div>
+  </div>
+
+  <h2>Get an interactive GPU node (LSF)</h2>
+  <div class="note ok"><div class="ni">✓</div><div class="nb2"><strong>This cluster uses LSF (bsub), not SLURM.</strong> All job submission is via <code>bsub</code>. The command below gives a full A100 96 GB in exclusive process mode with no MIG partitioning. Use this for all dev work, smoke tests, and training runs up to 12h.</div></div>
+  <div class="cw"><div class="ch"><span class="cf">interactive node — use this every session</span><span class="cl2">bash</span><button class="cbtn">copy</button></div>
+<pre><span class="cm"># Full 96 GB A100 — exclusive, no MIG, no MPS sharing, 12h limit</span>
+bsub -Is -q batch_a100 -n <span class="nm">4</span> -M <span class="nm">8192</span> -W <span class="nm">12</span>:00 \
+  -gpu <span class="st">"num=1:mode=exclusive_process:mps=no"</span> /bin/bash
+
+<span class="cm"># -n 4         : 4 CPU cores (32 GB total RAM = 4 × 8192 MB)</span>
+<span class="cm"># -M 8192      : 8 GB per core</span>
+<span class="cm"># -W 12:00     : 12h wall time</span>
+<span class="cm"># exclusive_process : full GPU, no time-sharing</span>
+<span class="cm"># mps=no       : no NVIDIA Multi-Process Service</span>
+
+<span class="cm"># After node allocation:</span>
+module load conda && conda activate openscene
+export PYTHONPATH=/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene
+cd /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene
+nvidia-smi   <span class="cm"># verify: 96 GB, exclusive_process</span></pre></div>
+
+  <div class="cw"><div class="ch"><span class="cf">submit_training.bsub — for runs over 12h</span><span class="cl2">bash</span><button class="cbtn">copy</button></div>
+<pre>#!/bin/bash
+#BSUB -J osp_pan_stage2
+#BSUB -q batch_a100
+#BSUB -n 4
+#BSUB -M 8192
+#BSUB -W 48:00                          <span class="cm"># extend for longer runs</span>
+#BSUB -gpu "num=1:mode=exclusive_process:mps=no"
+#BSUB -o /fs/scratch/.../logs/%J.out
+#BSUB -e /fs/scratch/.../logs/%J.err
+
+module load conda && conda activate openscene
+export PYTHONPATH=/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:<span class="nm">512</span>
+cd /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene
+
+python train_stage2.py \
+  --voxel_size <span class="nm">0.05</span> \
+  --workers <span class="nm">0</span> \
+  --encoder_type eva_clip \
+  --batch_size <span class="nm">2</span>
+
+<span class="cm"># Submit: bsub < submit_training.bsub</span>
+<span class="cm"># Monitor: bjobs -l JOB_ID</span>
+<span class="cm"># Kill:    bkill JOB_ID</span></pre></div>
+
+  <div class="note danger"><div class="ni">!</div><div class="nb2"><strong>workers must always be 0.</strong> Setting <code>num_workers &gt; 0</code> causes DataLoader hangs due to shared memory prefetch overflow — confirmed on this cluster (see Progress.md §10). Set in ALL DataLoader calls. Training bottleneck is GPU compute (backbone + EVA-CLIP + decoder forward), not IO, so workers=0 costs nothing in practice.</div></div>
+
+  <h2>Install</h2>
+  <div class="cw"><div class="ch"><span class="cf">install.sh</span><span class="cl2">bash</span><button class="cbtn">copy</button></div>
+<pre><span class="cm"># conda env</span>
+conda create -n osp_pan python=3.10 -y && conda activate osp_pan
+
+<span class="cm"># PyTorch CUDA 11.8</span>
+pip install torch==2.1.0+cu118 torchvision==0.16.0+cu118 \
+  --index-url https://download.pytorch.org/whl/cu118
+
+<span class="cm"># MinkowskiEngine — same backend as OpenScene</span>
+pip install MinkowskiEngine \
+  --extra-index-url https://www.open3d.org/docs/release/mink.html
+
+<span class="cm"># Core packages</span>
+pip install open-clip-torch nuscenes-devkit scipy einops \
+  pyquaternion h5py tensorboard matplotlib
+
+<span class="cm"># Clone repos</span>
+git clone https://github.com/PRBonn/MaskPLS          <span class="cm"># decoder source</span>
+git clone https://github.com/pengsongyou/openscene   <span class="cm"># backbone + pretrained weights</span>
+
+<span class="cm"># Verify</span>
+python -c "import MinkowskiEngine as ME; import open_clip; print('ME version:', ME.__version__)"</pre></div>
+
+  <h2>Check your OpenScene checkpoint dimensions (do this first)</h2>
+  <div class="note warn"><div class="ni">!</div><div class="nb2"><strong>Run this before writing any adapter code.</strong> OpenScene has two model variants: one distilled with OpenSeg features (768-d) and one with LSeg features (512-d). The dimension determines d_clip throughout the entire decoder pipeline.</div></div>
+  <div class="cw"><div class="ch"><span class="cf">scripts/inspect_checkpoint.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="kw">import</span> torch
+
+ckpt_path = <span class="st">'path/to/openscene_pretrained.pth'</span>
+ckpt = torch.load(ckpt_path, map_location=<span class="st">'cpu'</span>)
+
+<span class="cm"># OpenScene checkpoints usually wrap state in a key</span>
+state = ckpt.get(<span class="st">'model_state_dict'</span>, ckpt.get(<span class="st">'state_dict'</span>, ckpt))
+state = {k.replace(<span class="st">'module.'</span>, <span class="st">''</span>): v <span class="kw">for</span> k, v <span class="kw">in</span> state.items()}
+
+<span class="fn">print</span>(<span class="st">"=== All layer shapes ==="</span>)
+<span class="kw">for</span> k, v <span class="kw">in</span> sorted(state.items()):
+    <span class="fn">print</span>(<span class="fn">f</span><span class="st">"  {k:60s} {list(v.shape)}"</span>)
+
+<span class="cm"># Look for these patterns to determine output dimension:</span>
+<span class="cm">#   'linear.weight' shape [512, X] → d_clip = 512 (LSeg variant)</span>
+<span class="cm">#   'linear.weight' shape [768, X] → d_clip = 768 (OpenSeg variant)</span>
+<span class="cm">#   'head.weight'   shape [D, X]   → D is the output feature dim</span>
+<span class="fn">print</span>(<span class="st">"\n=== Projection / head layers ==="</span>)
+<span class="kw">for</span> k, v <span class="kw">in</span> state.items():
+    <span class="kw">if</span> any(x <span class="kw">in</span> k <span class="kw">for</span> x <span class="kw">in</span> [<span class="st">'proj'</span>, <span class="st">'head'</span>, <span class="st">'linear'</span>, <span class="st">'output'</span>]):
+        <span class="fn">print</span>(<span class="fn">f</span><span class="st">"  {k}: {list(v.shape)}"</span>)
+
+<span class="cm"># Also check what OpenScene's forward() returns on a dummy input:</span>
+<span class="kw">from</span> openscene.models.disnet <span class="kw">import</span> DisNet   <span class="cm"># DisNet = MinkUNet18A + output head → 768-d MinkUNet18A + output head</span>
+<span class="kw">import</span> MinkowskiEngine <span class="kw">as</span> ME
+
+dummy_coords  = torch.randint(<span class="nm">0</span>, <span class="nm">100</span>, (<span class="nm">500</span>, <span class="nm">4</span>), dtype=torch.int32)
+dummy_feats   = torch.randn(<span class="nm">500</span>, <span class="nm">1</span>)
+dummy_sparse  = ME.SparseTensor(dummy_feats, coordinates=dummy_coords)
+
+model = DisNet(in_channels=<span class="nm">1</span>, out_channels=<span class="nm">768</span>)  <span class="cm"># outputs 768-d directly</span>
+out   = model(dummy_sparse)
+<span class="fn">print</span>(<span class="fn">f</span><span class="st">"\nDisNet output dim: {out.F.shape[1]}"</span>)  <span class="cm"># expect 768</span>
+<span class="cm"># DisNet adds 1×1 output conv: 96 → 768 internally</span>
+<span class="cm"># This is NOT the projected CLIP dim — that's done by the projection head separately</span>
+<span class="cm"># DisNet output is already d_clip (768 for OpenSeg variant)</span></pre></div>
+
+  <h2>nuScenes mini data verification</h2>
+  <div class="cw"><div class="ch"><span class="cf">scripts/verify_mini.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="kw">from</span> nuscenes.nuscenes <span class="kw">import</span> NuScenes
+<span class="kw">import</span> numpy <span class="kw">as</span> np, os
+
+nusc = NuScenes(<span class="st">'v1.0-mini'</span>, dataroot=<span class="st">'/data/nuscenes'</span>, verbose=<span class="nb">False</span>)
+<span class="fn">print</span>(<span class="fn">f</span><span class="st">"Mini scenes: {len(nusc.scene)}"</span>)          <span class="cm"># expect 10</span>
+<span class="fn">print</span>(<span class="fn">f</span><span class="st">"Mini samples: {len(nusc.sample)}"</span>)        <span class="cm"># expect ~404</span>
+
+<span class="cm"># Verify panoptic labels exist</span>
+sample  = nusc.sample[<span class="nm">0</span>]
+token   = sample[<span class="st">'token'</span>]
+pan_f   = <span class="fn">f</span><span class="st">'/data/nuscenes/panoptic/v1.0-mini/{token}_panoptic.npz'</span>
+<span class="kw">assert</span> os.path.exists(pan_f), <span class="st">"Panoptic labels missing — download nuscenes panoptic"</span>
+pan     = np.load(pan_f)[<span class="st">'data'</span>]
+<span class="fn">print</span>(<span class="fn">f</span><span class="st">"Panoptic label shape: {pan.shape}, classes: {np.unique(pan//1000).tolist()}"</span>)
+
+<span class="cm"># Verify all 6 cameras</span>
+<span class="kw">for</span> cam <span class="kw">in</span> [<span class="st">'CAM_FRONT'</span>,<span class="st">'CAM_FRONT_LEFT'</span>,<span class="st">'CAM_FRONT_RIGHT'</span>,
+            <span class="st">'CAM_BACK'</span>,<span class="st">'CAM_BACK_LEFT'</span>,<span class="st">'CAM_BACK_RIGHT'</span>]:
+    sd = nusc.get(<span class="st">'sample_data'</span>, sample[<span class="st">'data'</span>][cam])
+    <span class="kw">assert</span> os.path.exists(nusc.dataroot + sd[<span class="st">'filename'</span>]), <span class="fn">f</span><span class="st">"{cam} image missing"</span>
+<span class="fn">print</span>(<span class="st">"✓ All 6 cameras present"</span>)
+<span class="fn">print</span>(<span class="st">"✓ Ready to run MaskPLS smoke test"</span>)</pre></div>
+</div></div>
+
+<!-- ====== PAGE: MASKPLS SMOKE TEST ====== -->
+<div id="page-maskpls" class="page"><div class="wrap">
+  <h1>MaskPLS smoke test on nuScenes mini</h1>
+  <p class="lead">MaskPLS was written for SemanticKITTI. Running it on nuScenes requires writing a new dataloader. Do not skip this step — it validates the Hungarian matcher, loss functions, and evaluation pipeline before touching the backbone. You want to know the system works before swapping any components.</p>
+
+  <div class="note danger"><div class="ni">!</div><div class="nb2"><strong>Do NOT reuse OpenScene's <code>data/nuscenes_3d/</code> or <code>data/nuscenes_2d/</code> for panoptic training.</strong> OpenScene aggregates all ~40 keyframes of a scene into one global point cloud (<code>data/nuscenes_3d/{scene}.pth</code>). Panoptic segmentation needs per-keyframe point clouds — instance IDs only make sense within one sweep. Build <code>NuScenesMaskPLS</code> directly from <code>nuscenes-devkit</code>. The pretrained backbone weights still load perfectly — only the data pipeline is separate.</div></div>
+
+  <div class="note warn"><div class="ni">!</div><div class="nb2"><strong>Panoptic encoding: Progress.md §10 has a typo.</strong> It says <code>instance_id * 1000 + class_id</code>. The <strong>official nuScenes panoptic format</strong> is: <code>category_id * 1000 + instance_id</code>. Decode with <code>semantic = pan // 1000</code>, <code>instance = pan % 1000</code>. The dataloader code below uses the correct formula. The verify_mini.py call <code>np.unique(pan//1000)</code> also uses the correct decoding.</div></div>
+
+  <div class="note warn"><div class="ni">!</div><div class="nb2"><strong>Smoke test scope:</strong> 1–2 training epochs on nuScenes mini only (10 scenes, ~400 samples). Goal is not good PQ — it's confirming loss decreases, masks appear, and the eval script runs without error. Full training on nuScenes full happens after the backbone swap.</div></div>
+
+  <h2>What MaskPLS looks like originally (SemanticKITTI)</h2>
+  <div class="g2">
+    <div class="card">
+      <div class="card-t">MaskPLS original design</div>
+      <div class="card-b">Backbone: MinkUNet34C → 256-d per-voxel features<br>Queries: N learnable queries (no thing/stuff split)<br>Decoder: Mask2Former-style cross-attention (6 layers)<br>Heads: objectness score + binary mask<br>Loss: BCE + Dice + objectness focal<br>Matching: Hungarian on mask cost<br><br>No CLIP token head. No text. No camera.</div>
+    </div>
+    <div class="card pu">
+      <div class="card-t" style="color:var(--pu)">What we add on top</div>
+      <div class="card-b">Keep: backbone, decoder, Hungarian matcher, mask loss<br><br>Change: backbone (swap MinkUNet34C → OpenScene DisNet frozen, 768-d output)<br><br>Add: CLIP token head (3-layer MLP → 768-d per query)<br>Add: camera cross-attention layer in decoder<br>Add: L_token = cosine loss to text prototypes<br>Add: nuScenes thing/stuff query separation</div>
+    </div>
+  </div>
+
+  <h2>Step 1 — nuScenes panoptic dataloader for MaskPLS</h2>
+  <p>This is the core new code for the smoke test. MaskPLS expects a dataset class that returns sparse tensors + GT masks. Write this first.</p>
+  <div class="cw"><div class="ch"><span class="cf">dataset/nuscenes_maskpls.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="kw">import</span> torch, numpy <span class="kw">as</span> np
+<span class="kw">from</span> torch.utils.data <span class="kw">import</span> Dataset
+<span class="kw">import</span> MinkowskiEngine <span class="kw">as</span> ME
+<span class="kw">from</span> nuscenes.nuscenes <span class="kw">import</span> NuScenes
+<span class="kw">from</span> nuscenes.utils.data_classes <span class="kw">import</span> LidarPointCloud
+<span class="kw">from</span> nuscenes.utils.splits <span class="kw">import</span> create_splits_scenes
+<span class="kw">from</span> pyquaternion <span class="kw">import</span> Quaternion
+
+<span class="cm"># nuScenes thing classes (semantic IDs 1-10) and stuff classes (11-16)</span>
+THING_IDS = list(range(<span class="nm">1</span>, <span class="nm">11</span>))   <span class="cm"># 10 thing classes</span>
+STUFF_IDS = list(range(<span class="nm">11</span>, <span class="nm">17</span>))  <span class="cm"># 6 stuff classes</span>
+VOXEL_SIZE = <span class="nm">0.05</span>   <span class="cm"># MUST match OpenScene checkpoint training (0.05m not 0.1m)</span>
+RANGE = np.array([-<span class="nm">51.2</span>, -<span class="nm">51.2</span>, -<span class="nm">5.0</span>, <span class="nm">51.2</span>, <span class="nm">51.2</span>, <span class="nm">3.0</span>])
+
+<span class="kw">class</span> <span class="fn">NuScenesMaskPLS</span>(Dataset):
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, dataroot=<span class="st">'/data/nuscenes'</span>, version=<span class="st">'v1.0-mini'</span>, split=<span class="st">'train'</span>):
+        self.nusc = NuScenes(version=version, dataroot=dataroot, verbose=<span class="nb">False</span>)
+        self.dataroot = dataroot
+
+        <span class="cm"># Build sample list for split</span>
+        splits = create_splits_scenes()
+        key = <span class="st">'mini_train'</span> <span class="kw">if</span> <span class="st">'mini'</span> <span class="kw">in</span> version <span class="kw">and</span> split==<span class="st">'train'</span> \
+              <span class="kw">else</span> <span class="st">'mini_val'</span> <span class="kw">if</span> <span class="st">'mini'</span> <span class="kw">in</span> version \
+              <span class="kw">else</span> split
+        scene_names = set(splits[key])
+        self.tokens = [
+            s[<span class="st">'token'</span>] <span class="kw">for</span> s <span class="kw">in</span> self.nusc.sample
+            <span class="kw">if</span> self.nusc.get(<span class="st">'scene'</span>, s[<span class="st">'scene_token'</span>])[<span class="st">'name'</span>] <span class="kw">in</span> scene_names
+        ]
+        <span class="fn">print</span>(<span class="fn">f</span><span class="st">"[{split}] {len(self.tokens)} samples from {version}"</span>)
+
+    <span class="kw">def</span> <span class="fn">__len__</span>(self): <span class="kw">return</span> len(self.tokens)
+
+    <span class="kw">def</span> <span class="fn">__getitem__</span>(self, idx):
+        token  = self.tokens[idx]
+        sample = self.nusc.get(<span class="st">'sample'</span>, token)
+
+        <span class="cm"># ── LiDAR ──</span>
+        lidar_sd = self.nusc.get(<span class="st">'sample_data'</span>, sample[<span class="st">'data'</span>][<span class="st">'LIDAR_TOP'</span>])
+        pc = LidarPointCloud.from_file(self.dataroot + lidar_sd[<span class="st">'filename'</span>])
+        pts = pc.points.T.astype(np.float32)   <span class="cm"># [N, 4]: x,y,z,intensity</span>
+
+        <span class="cm"># Range filter</span>
+        keep = ((pts[:,<span class="nm">0</span>] >= RANGE[<span class="nm">0</span>]) & (pts[:,<span class="nm">0</span>] <= RANGE[<span class="nm">3</span>]) &
+                (pts[:,<span class="nm">1</span>] >= RANGE[<span class="nm">1</span>]) & (pts[:,<span class="nm">1</span>] <= RANGE[<span class="nm">4</span>]) &
+                (pts[:,<span class="nm">2</span>] >= RANGE[<span class="nm">2</span>]) & (pts[:,<span class="nm">2</span>] <= RANGE[<span class="nm">5</span>]))
+        pts = pts[keep]
+
+        <span class="cm"># ── Panoptic GT ──</span>
+        version = self.nusc.version
+        pan_path = <span class="fn">f</span><span class="st">'{self.dataroot}/panoptic/{version}/{token}_panoptic.npz'</span>
+        pan = np.load(pan_path)[<span class="st">'data'</span>][keep]   <span class="cm"># [N]</span>
+        sem = (pan // <span class="nm">1000</span>).astype(np.int32)    <span class="cm"># 0–16</span>
+        inst= (pan % <span class="nm">1000</span>).astype(np.int32)     <span class="cm"># unique per instance</span>
+
+        <span class="cm"># ── Voxelize ──</span>
+        coords_f = pts[:, :<span class="nm">3</span>] / VOXEL_SIZE
+        coords_i = np.floor(coords_f).astype(np.int32)  <span class="cm"># [N, 3]</span>
+        _, vox_idx, inv_idx = np.unique(coords_i, axis=<span class="nm">0</span>,
+                                         return_index=<span class="nb">True</span>, return_inverse=<span class="nb">True</span>)
+        V = len(vox_idx)
+        vox_coords = coords_i[vox_idx]           <span class="cm"># [V, 3]</span>
+        vox_feats  = pts[vox_idx, <span class="nm">3</span>:]            <span class="cm"># [V, 1] intensity</span>
+        vox_sem    = sem[vox_idx]                  <span class="cm"># [V] dominant semantic per voxel</span>
+
+        <span class="cm"># ── Build GT instance masks (things + stuff) ──</span>
+        gt_masks, gt_classes = [], []
+        <span class="cm"># Things: one mask per instance</span>
+        thing_pts = (sem >= <span class="nm">1</span>) & (sem <= <span class="nm">10</span>)
+        <span class="kw">for</span> iid <span class="kw">in</span> np.unique(inst[thing_pts]):
+            <span class="kw">if</span> iid == <span class="nm">0</span>: <span class="kw">continue</span>
+            pt_mask  = inst == iid
+            <span class="cm"># Project point mask → voxel mask (voxel "on" if ≥1 point is on)</span>
+            vox_mask = np.zeros(V, dtype=bool)
+            vox_mask[inv_idx[pt_mask]] = <span class="nb">True</span>
+            gt_masks.append(vox_mask)
+            gt_classes.append(int(sem[pt_mask][<span class="nm">0</span>]) - <span class="nm">1</span>)  <span class="cm"># 0-indexed</span>
+        <span class="cm"># Stuff: one mask per class (no instances)</span>
+        <span class="kw">for</span> sid <span class="kw">in</span> STUFF_IDS:
+            pt_mask  = sem == sid
+            vox_mask = np.zeros(V, dtype=bool)
+            <span class="kw">if</span> pt_mask.any():
+                vox_mask[inv_idx[pt_mask]] = <span class="nb">True</span>
+            gt_masks.append(vox_mask)
+            gt_classes.append(sid - <span class="nm">1</span>)  <span class="cm"># 0-indexed overall class</span>
+
+        gt_masks   = np.stack(gt_masks).astype(np.float32)   <span class="cm"># [N_inst+6, V]</span>
+        gt_classes = np.array(gt_classes, dtype=np.int64)
+
+        <span class="kw">return</span> {
+            <span class="st">'token'</span>:      token,
+            <span class="st">'coords'</span>:     vox_coords,          <span class="cm"># [V, 3] int32</span>
+            <span class="st">'feats'</span>:      vox_feats,           <span class="cm"># [V, 1] float32</span>
+            <span class="st">'gt_masks'</span>:   gt_masks,            <span class="cm"># [N_masks, V] float32 binary</span>
+            <span class="st">'gt_classes'</span>: gt_classes,          <span class="cm"># [N_masks] int64</span>
+            <span class="st">'n_things'</span>:   len(THING_IDS),      <span class="cm"># number of thing classes</span>
+            <span class="st">'semantic'</span>:   vox_sem,             <span class="cm"># [V] for eval</span>
+        }
+
+
+<span class="kw">def</span> <span class="fn">collate_fn</span>(batch):
+    <span class="st">"""
+    Custom collate: sparse tensor coords need batch index prepended.
+    GT masks cannot be stacked across samples (different N_instances per sample).
+    """</span>
+    coords_list, feats_list = [], []
+    <span class="kw">for</span> b_idx, item <span class="kw">in</span> enumerate(batch):
+        b_col = np.full((len(item[<span class="st">'coords'</span>]), <span class="nm">1</span>), b_idx, dtype=np.int32)
+        coords_list.append(np.hstack([b_col, item[<span class="st">'coords'</span>]]))
+        feats_list.append(item[<span class="st">'feats'</span>])
+
+    coords = torch.from_numpy(np.vstack(coords_list)).int()
+    feats  = torch.from_numpy(np.vstack(feats_list)).float()
+    sparse = ME.SparseTensor(feats, coordinates=coords)
+
+    <span class="cm"># Return per-sample GT dicts (cannot batch-stack due to variable instance count)</span>
+    gt_list = [{<span class="st">'masks'</span>: torch.from_numpy(x[<span class="st">'gt_masks'</span>]),
+                <span class="st">'classes'</span>: torch.from_numpy(x[<span class="st">'gt_classes'</span>]),
+                <span class="st">'n_things'</span>: x[<span class="st">'n_things'</span>],
+                <span class="st">'token'</span>: x[<span class="st">'token'</span>]} <span class="kw">for</span> x <span class="kw">in</span> batch]
+    <span class="kw">return</span> sparse, gt_list</pre></div>
+
+  <h2>Step 2 — Run MaskPLS smoke test</h2>
+  <div class="cw"><div class="ch"><span class="cf">scripts/smoke_test_maskpls.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="kw">"""
+Smoke test: run MaskPLS on nuScenes mini.
+Goal: loss decreases, masks exist, eval runs. NOT good PQ.
+Runtime: ~15-20 minutes for 2 epochs on mini.
+"""</span>
+<span class="kw">import</span> torch, torch.nn <span class="kw">as</span> nn
+<span class="kw">import</span> MinkowskiEngine <span class="kw">as</span> ME
+<span class="kw">from</span> dataset.nuscenes_maskpls <span class="kw">import</span> NuScenesMaskPLS, collate_fn
+
+<span class="cm"># ── Import MaskPLS components (from cloned repo) ──</span>
+<span class="kw">import</span> sys; sys.path.insert(<span class="nm">0</span>, <span class="st">'MaskPLS/'</span>)
+<span class="kw">from</span> models.mask_pls <span class="kw">import</span> MaskPLS        <span class="cm"># main model class</span>
+<span class="kw">from</span> models.criterion <span class="kw">import</span> MaskPLSLoss   <span class="cm"># loss function</span>
+
+<span class="cm"># MaskPLS config for nuScenes</span>
+<span class="cm"># Original MaskPLS config is for SemanticKITTI — adapt these values:</span>
+cfg = {
+    <span class="st">'backbone'</span>: {<span class="st">'in_channels'</span>: <span class="nm">1</span>, <span class="st">'out_channels'</span>: <span class="nm">256</span>},  <span class="cm"># intensity only</span>
+    <span class="st">'decoder'</span>: {
+        <span class="st">'num_queries'</span>: <span class="nm">150</span>,      <span class="cm"># 100 thing + 6 stuff + 44 extra buffer</span>
+        <span class="st">'num_heads'</span>: <span class="nm">8</span>,
+        <span class="st">'num_layers'</span>: <span class="nm">6</span>,
+        <span class="st">'d_model'</span>: <span class="nm">256</span>,
+        <span class="st">'dim_feedforward'</span>: <span class="nm">1024</span>,
+        <span class="st">'dropout'</span>: <span class="nm">0.0</span>,
+    },
+    <span class="st">'loss'</span>: {
+        <span class="st">'weight_bce'</span>: <span class="nm">1.0</span>,
+        <span class="st">'weight_dice'</span>: <span class="nm">4.0</span>,
+        <span class="st">'weight_obj'</span>: <span class="nm">1.0</span>,
+        <span class="st">'focal_alpha'</span>: <span class="nm">0.25</span>,
+        <span class="st">'focal_gamma'</span>: <span class="nm">2.0</span>,
+        <span class="st">'aux_weight'</span>: <span class="nm">0.5</span>,
+    }
+}
+
+device = torch.device(<span class="st">'cuda'</span>)
+model  = MaskPLS(cfg).to(device)
+loss_fn= MaskPLSLoss(cfg[<span class="st">'loss'</span>])
+opt    = torch.optim.AdamW(model.parameters(), lr=<span class="nm">1e-4</span>, weight_decay=<span class="nm">0.01</span>)
+
+ds     = NuScenesMaskPLS(version=<span class="st">'v1.0-mini'</span>, split=<span class="st">'train'</span>)
+loader = torch.utils.data.DataLoader(ds, batch_size=<span class="nm">1</span>, shuffle=<span class="nb">True</span>,
+                                     num_workers=<span class="nm">0</span>, collate_fn=collate_fn  <span class="cm"># must be 0 on batch_a100 cluster</span>)
+
+<span class="fn">print</span>(<span class="st">"Running smoke test: 2 epochs on nuScenes mini..."</span>)
+<span class="kw">for</span> epoch <span class="kw">in</span> range(<span class="nm">2</span>):
+    model.train()
+    total_loss = <span class="nm">0</span>
+    <span class="kw">for</span> i, (sparse, gt_list) <span class="kw">in</span> enumerate(loader):
+        sparse = sparse.to(device)
+        gt     = {k: v.to(device) <span class="kw">if</span> isinstance(v, torch.Tensor) <span class="kw">else</span> v
+                  <span class="kw">for</span> k, v <span class="kw">in</span> gt_list[<span class="nm">0</span>].items()}
+
+        <span class="kw">with</span> torch.cuda.amp.autocast():
+            outputs = model(sparse)          <span class="cm"># list of layer dicts</span>
+            loss    = loss_fn(outputs, [gt])
+
+        opt.zero_grad(set_to_none=<span class="nb">True</span>)
+        loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), <span class="nm">1.0</span>)
+        opt.step()
+        total_loss += loss.item()
+
+        <span class="kw">if</span> i % <span class="nm">50</span> == <span class="nm">0</span>:
+            <span class="fn">print</span>(<span class="fn">f</span><span class="st">"  ep{epoch+1} step{i}/{len(loader)}  loss={loss.item():.4f}"</span>)
+
+    <span class="fn">print</span>(<span class="fn">f</span><span class="st">"Epoch {epoch+1} avg loss: {total_loss/len(loader):.4f}"</span>)
+    <span class="cm"># Expected: ep1 loss ~3-8 (high, unstable), ep2 loss ~1-3 (decreasing)</span>
+    <span class="cm"># Any decrease = smoke test passing</span>
+
+<span class="fn">print</span>(<span class="st">"Smoke test complete. Proceed to backbone swap."</span>)</pre></div>
+
+  <h2>Smoke test pass/fail criteria</h2>
+  <div class="g2">
+    <div class="card te">
+      <div class="card-t" style="color:var(--te)">✓ Smoke test passes if</div>
+      <div class="card-b">Loss at epoch 2 &lt; loss at epoch 1 (any decrease). At least 1 Hungarian match found per frame on average. Eval script runs without crashing. Any PQ value &gt; 0 on mini val (even 5.0 is fine).</div>
+    </div>
+    <div class="card co">
+      <div class="card-t" style="color:var(--co)">✗ Smoke test fails if</div>
+      <div class="card-b">Loss is NaN → check that dense GT masks don't have all-zero rows. Loss not decreasing at all → check Hungarian matching finds any pairs. CUDA OOM → reduce batch from 1 to 1 (already minimum) → reduce max_queries. Import errors from MaskPLS → check sys.path and ME version.</div>
+    </div>
+  </div>
+
+  <h2>Checklist before moving to backbone swap</h2>
+  <ul class="cl3">
+    <li onclick="this.classList.toggle('done')"><div class="ckb"><span class="ckm">✓</span></div>inspect_checkpoint.py ran — know d_clip dimension</li>
+    <li onclick="this.classList.toggle('done')"><div class="ckb"><span class="ckm">✓</span></div>verify_mini.py passed — panoptic labels + 6 cameras present</li>
+    <li onclick="this.classList.toggle('done')"><div class="ckb"><span class="ckm">✓</span></div>NuScenesMaskPLS.__getitem__ returns correct shapes (no assertion errors)</li>
+    <li onclick="this.classList.toggle('done')"><div class="ckb"><span class="ckm">✓</span></div>collate_fn works — SparseTensor builds without coordinate conflicts</li>
+    <li onclick="this.classList.toggle('done')"><div class="ckb"><span class="ckm">✓</span></div>smoke_test_maskpls.py: epoch 2 loss &lt; epoch 1 loss</li>
+    <li onclick="this.classList.toggle('done')"><div class="ckb"><span class="ckm">✓</span></div>At least some Hungarian matches per frame (log from matcher)</li>
+    <li onclick="this.classList.toggle('done')"><div class="ckb"><span class="ckm">✓</span></div>MaskPLS forward pass output shapes understood (objectness, masks, per layer)</li>
+  </ul>
+</div></div>
+
+<!-- ====== PAGE: ARCH ====== -->
+<div id="page-arch" class="page"><div class="wrap">
+  <h1>Architecture overview</h1>
+  <p class="lead">Three models exist across the ablation study. Architecturally they share the decoder — only the backbone and additional heads change. Understanding all three together makes the ablation story clear.</p>
+
+  <h2>Model A1 — MaskPLS baseline (geometry-only)</h2>
+  <div class="card">
+    <div class="card-b" style="font-family:var(--mono);font-size:12px;line-height:2;color:#c5d8f0">
+LiDAR scan<br>
+  ↓ voxelize (0.05m)<br>
+  ↓ MinkUNet34C backbone  [V × 256]  ← original MaskPLS backbone, geometry-only<br>
+  ↓ Transformer decoder (6 layers)<br>
+    self-attn → LiDAR cross-attn → FFN<br>
+  ↓ Objectness head  → score_i ∈ [0,1]<br>
+  ↓ Mask head        → M̂_i ∈ R^V  (dot product: query · voxel_features)<br>
+  ↓ Filter by objectness > 0.5<br>
+  → Panoptic output (NO text, NO camera)
+    </div>
+  </div>
+
+  <h2>Model A2 — OpenSeg backbone + CLIP head (this plan, Phase A)</h2>
+  <div class="card pu">
+    <div class="card-b" style="font-family:var(--mono);font-size:12px;line-height:2;color:#c4b5fd">
+LiDAR scan<br>
+  ↓ voxelize (0.05m)<br>
+  ↓ OpenScene DisNet → [V × 768]  ← FROZEN, outputs 768-d directly (no separate proj head)<br>
+    (MinkUNet18A + 1×1 output conv, distilled on OpenSeg features — already in CLIP space)<br>
+  ↓ Adapter Linear(768 → 256)  ← trainable, maps to decoder dim<br>
+  ↓ Transformer decoder (6 layers)<br>
+    self-attn → LiDAR cross-attn → FFN<br>
+  ↓ Objectness head  → score_i ∈ [0,1]<br>
+  ↓ Mask head        → M̂_i ∈ R^V<br>
+  ↓ CLIP token head  → ĝ_i ∈ R^d_clip  ← NEW: 3-layer MLP, predicts CLIP space<br>
+  ↓ At inference: cos(ĝ_i, CLIP_text("car")) → zero-shot class assignment
+    </div>
+  </div>
+
+  <h2>Model A3 — A2 + camera cross-attention (novel contribution)</h2>
+  <div class="card te">
+    <div class="card-b" style="font-family:var(--mono);font-size:12px;line-height:2;color:#86efac">
+LiDAR scan + 6 Camera images<br>
+  ↓<br>
+  LiDAR path:  voxelize → OpenScene backbone [V × d_clip] → Adapter [V × 256]<br>
+  Camera path: CLIP ViT-L/14 → patch tokens [6×256 × d_clip] → cam_proj [P × 256]<br>
+  ↓<br>
+  Transformer decoder (6 layers)<br>
+    self-attn<br>
+    LiDAR cross-attn  (Q=queries, K=V=lidar_feats)<br>
+    Camera cross-attn (Q=queries, K=V=cam_feats)  ← NEW per-layer block<br>
+    FFN<br>
+  ↓<br>
+  Objectness + Mask + CLIP token heads (same as A2)<br>
+  ↓<br>
+  At inference: same text filtering — but CLIP tokens now enriched with visual context
+    </div>
+  </div>
+
+  <h2>Dimension flow — trace shapes through the system</h2>
+  <table>
+    <tr><th>Component</th><th>Input shape</th><th>Output shape</th><th>Notes</th></tr>
+    <tr><td>LiDAR voxelization</td><td class="c">N × 4 points</td><td class="c">V × 1 sparse tensor</td><td>V ≈ 80–120K @ 0.05m (nuScenes range ±51.2m × ±51.2m × ±5m). Match checkpoint.</td></tr>
+    <tr><td>OpenScene DisNet (MinkUNet18A + output head)</td><td class="c">V × 1 sparse</td><td class="c">V × 768</td><td>DisNet outputs 768-d directly. No separate proj head. Confirmed from Progress.md §3.1.</td></tr>
+    <tr><td>Backbone adapter (new)</td><td class="c">V × d_clip</td><td class="c">V × 256</td><td>Linear(d_clip, 256) — trainable in Stage 2</td></tr>
+    <tr><td>CLIP ViT-L/14 (camera)</td><td class="c">6 × 3 × H × W</td><td class="c">6 × 256 × d_clip</td><td>Patch tokens, not CLS</td></tr>
+    <tr><td>cam_proj (in decoder)</td><td class="c">1536 × d_clip</td><td class="c">1536 × 256</td><td>Linear(d_clip, 256) — trainable</td></tr>
+    <tr><td>Learnable queries</td><td class="c">—</td><td class="c">106 × 256</td><td>100 thing + 6 stuff, learned embeddings</td></tr>
+    <tr><td>Decoder (6 layers)</td><td class="c">106 × 256</td><td class="c">106 × 256</td><td>Queries refined through cross-attention</td></tr>
+    <tr><td>Objectness head</td><td class="c">106 × 256</td><td class="c">106 × 1</td><td>MLP → sigmoid → confidence score</td></tr>
+    <tr><td>Mask head</td><td class="c">106 × 256, V × 256</td><td class="c">106 × V</td><td>dot product (query, lidar_feat) per voxel</td></tr>
+    <tr><td>CLIP token head</td><td class="c">106 × 256</td><td class="c">106 × d_clip</td><td>3-layer MLP → L2-normalized</td></tr>
+    <tr><td>Text classifier</td><td class="c">106 × d_clip</td><td class="c">106 × C</td><td>cosine sim with C class text embeddings</td></tr>
+  </table>
+</div></div>
+
+<!-- ====== PAGE: BACKBONE SWAP ====== -->
+<div id="page-swap" class="page"><div class="wrap">
+  <h1>Step 2 — Backbone swap</h1>
+  <p class="lead">After the smoke test passes, remove MaskPLS's original MinkUNet34C and replace it with the frozen OpenScene pretrained backbone. This is the core of the openscene_panoptic_ablation plan.</p>
+
+  <div class="note ok"><div class="ni">✓</div><div class="nb2"><strong>Why this works without retraining the backbone.</strong> OpenScene's pretrained backbone already outputs features in CLIP embedding space (distilled from OpenSeg, which was itself trained to match CLIP text). The features are semantically rich by construction — no gradient needed. Freezing it is not a limitation, it's the point: we're testing whether these pretrained CLIP-aligned features improve panoptic segmentation compared to geometry-only features.</div></div>
+
+  <h2>The adapter layer — bridging backbone output to decoder input</h2>
+  <div class="note ok"><div class="ni">✓</div><div class="nb2"><strong>Key fact from Progress.md §3:</strong> The OpenScene checkpoint uses <strong>DisNet</strong> — a thin wrapper around MinkUNet18A that already includes the output projection head (<code>1×1 sparse conv → [N, 768]</code>). DisNet outputs <strong>768-d directly</strong>. You load DisNet (not raw MinkUNet18A). The adapter <code>Linear(768→256)</code> maps that 768-d CLIP-space output to the decoder's 256-d query space.</div></div>
+  <div class="cw"><div class="ch"><span class="cf">models/openscene_backbone.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="kw">import</span> torch, torch.nn <span class="kw">as</span> nn, torch.nn.functional <span class="kw">as</span> F
+<span class="kw">import</span> MinkowskiEngine <span class="kw">as</span> ME
+<span class="kw">import</span> sys; sys.path.insert(<span class="nm">0</span>, <span class="st">'openscene/'</span>)
+<span class="kw">from</span> models.disnet <span class="kw">import</span> DisNet   <span class="cm"># NOT MinkUNet18A — DisNet is the full wrapper</span>
+
+
+<span class="kw">class</span> <span class="fn">OpenSceneFrozenBackbone</span>(nn.Module):
+    <span class="st">"""
+    Wraps OpenScene's DisNet for use as a frozen feature extractor.
+
+    DisNet architecture (from models/disnet.py + models/mink_unet.py):
+      Input:  SparseTensor [N_voxels, 1]   (intensity, voxel_size=0.05m)
+      MinkUNet18A U-Net stages (96-d final)
+      Output head: 1×1 sparse conv → [N_voxels, 768]   ← already CLIP space
+
+    DisNet outputs 768-d directly — no separate proj_head needed.
+    We add only a trainable adapter Linear(768→256) for the decoder.
+
+    VOXEL SIZE: must be 0.05m to match the checkpoint's training distribution.
+    Using 0.1m will cause subtle domain mismatch in the backbone features.
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d_clip: int = <span class="nm">768</span>, d_model: int = <span class="nm">256</span>):
+        super().__init__()
+        <span class="cm"># DisNet: MinkUNet18A + 768-d output head — confirmed from Progress.md §3.1</span>
+        self.backbone = DisNet(in_channels=<span class="nm">1</span>, out_channels=d_clip)
+        <span class="cm"># Trainable adapter: CLIP 768-d → decoder 256-d</span>
+        self.adapter = nn.Sequential(
+            nn.Linear(d_clip, d_model),
+            nn.LayerNorm(d_model),
+        )
+        self.d_clip  = d_clip   <span class="cm"># 768 — confirmed from nuscenes_openseg.pth.tar</span>
+        self.d_model = d_model
+
+    <span class="kw">def</span> <span class="fn">load_openscene_weights</span>(self, ckpt_path: str):
+        <span class="st">"""
+        Load nuscenes_openseg.pth.tar into DisNet. Freeze backbone.
+        Adapter stays trainable for Stage 2.
+
+        Checkpoint path on cluster:
+          openscene/models/nuscenes_openseg.pth.tar
+        """</span>
+        ckpt  = torch.load(ckpt_path, map_location=<span class="st">'cpu'</span>)
+        <span class="cm"># OpenScene saves under 'state_dict' key</span>
+        state = ckpt.get(<span class="st">'state_dict'</span>, ckpt.get(<span class="st">'model_state_dict'</span>, ckpt))
+        <span class="cm"># Strip DataParallel 'module.' prefix if present</span>
+        state = {k.replace(<span class="st">'module.'</span>, <span class="st">''</span>): v <span class="kw">for</span> k, v <span class="kw">in</span> state.items()}
+
+        miss, unex = self.backbone.load_state_dict(state, strict=<span class="nb">False</span>)
+        <span class="fn">print</span>(<span class="fn">f</span><span class="st">"DisNet loaded. Missing: {len(miss)}, Unexpected: {len(unex)}"</span>)
+        <span class="cm"># Expected: missing=0, unexpected=0 (or just adapter keys)</span>
+        <span class="kw">if</span> miss: <span class="fn">print</span>(<span class="st">"  Missing keys:"</span>, miss[:<span class="nm">5</span>])
+
+        <span class="cm"># Freeze entire DisNet — only adapter trains in Stage 2</span>
+        <span class="kw">for</span> p <span class="kw">in</span> self.backbone.parameters():
+            p.requires_grad_(<span class="nb">False</span>)
+        self.backbone.eval()
+        <span class="fn">print</span>(<span class="fn">f</span><span class="st">"DisNet frozen. d_clip={self.d_clip}. Adapter is trainable."</span>)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, sparse: ME.SparseTensor) -> tuple:
+        <span class="st">"""
+        Returns:
+          f_clip:  [V, 768] — L2-normalised CLIP-space features (for token loss)
+          f_adapt: [V, 256] — adapter output (for decoder LiDAR cross-attn K,V)
+        """</span>
+        <span class="kw">with</span> torch.no_grad():
+            <span class="cm"># DisNet forward: sparse → MinkUNet18A → 1×1 conv → 768-d</span>
+            out    = self.backbone(sparse)          <span class="cm"># SparseTensor [V, 768]</span>
+            f_clip = F.normalize(out.F, dim=-<span class="nm">1</span>)   <span class="cm"># [V, 768] — already CLIP space</span>
+        f_adapt = self.adapter(f_clip)              <span class="cm"># [V, 256] — trainable, has grad</span>
+        <span class="kw">return</span> f_clip, f_adapt
+
+
+<span class="cm"># ── Quick verification ─────────────────────────────────────────────────────</span>
+<span class="kw">if</span> __name__ == <span class="st">'__main__'</span>:
+    backbone = OpenSceneFrozenBackbone(d_clip=<span class="nm">768</span>, d_model=<span class="nm">256</span>).cuda()
+    backbone.load_openscene_weights(
+        <span class="st">'/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/models/nuscenes_openseg.pth.tar'</span>
+    )
+    <span class="cm"># Dummy sparse input at 0.05m voxels (~100K points typical for nuScenes)</span>
+    coords = torch.randint(<span class="nm">0</span>, <span class="nm">1000</span>, (<span class="nm">80000</span>, <span class="nm">4</span>), dtype=torch.int32).cuda()
+    feats  = torch.ones(<span class="nm">80000</span>, <span class="nm">1</span>).cuda()
+    sparse = ME.SparseTensor(feats, coordinates=coords)
+
+    f_clip, f_adapt = backbone(sparse)
+    <span class="fn">print</span>(<span class="fn">f</span><span class="st">"f_clip shape:  {f_clip.shape}"</span>)   <span class="cm"># expect [80000, 768]</span>
+    <span class="fn">print</span>(<span class="fn">f</span><span class="st">"f_adapt shape: {f_adapt.shape}"</span>)  <span class="cm"># expect [80000, 256]</span>
+    <span class="fn">print</span>(<span class="fn">f</span><span class="st">"f_clip norm:   {f_clip.norm(dim=-1).mean():.4f}"</span>)  <span class="cm"># expect ~1.0</span>
+    <span class="fn">print</span>(<span class="fn">f</span><span class="st">"Adapter grad:  {f_adapt.requires_grad}"</span>)          <span class="cm"># expect True</span>
+    <span class="fn">print</span>(<span class="st">"✓ Backbone swap verified"</span>)</pre></div>
+</div></div>
+
+<!-- ====== PAGE: CLIP HEAD ====== -->
+<div id="page-cliphead" class="page"><div class="wrap">
+  <h1>Step 3 — CLIP token head + text supervision</h1>
+  <p class="lead">The CLIP token head predicts a vector in CLIP embedding space for each query. During training it is supervised by pre-computed text prototypes. At inference it enables zero-shot text-guided classification.</p>
+
+  <h2>Pre-compute nuScenes class prototypes (run once)</h2>
+  <div class="cw"><div class="ch"><span class="cf">scripts/precompute_prototypes.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="kw">import</span> open_clip, torch, torch.nn.functional <span class="kw">as</span> F
+
+<span class="cm"># Use descriptive prompts — outperforms bare class names in CLIP zero-shot</span>
+PROMPTS = [
+    <span class="st">'a lidar scan of a barrier on the road'</span>,      <span class="cm"># 1</span>
+    <span class="st">'a lidar scan of a bicycle'</span>,                   <span class="cm"># 2</span>
+    <span class="st">'a lidar scan of a bus'</span>,                       <span class="cm"># 3</span>
+    <span class="st">'a lidar scan of a car'</span>,                       <span class="cm"># 4</span>
+    <span class="st">'a lidar scan of a construction vehicle'</span>,      <span class="cm"># 5</span>
+    <span class="st">'a lidar scan of a motorcycle'</span>,                <span class="cm"># 6</span>
+    <span class="st">'a lidar scan of a pedestrian walking'</span>,        <span class="cm"># 7</span>
+    <span class="st">'a lidar scan of a traffic cone'</span>,              <span class="cm"># 8</span>
+    <span class="st">'a lidar scan of a trailer'</span>,                   <span class="cm"># 9</span>
+    <span class="st">'a lidar scan of a truck'</span>,                     <span class="cm"># 10</span>
+    <span class="st">'a lidar scan of a driveable road surface'</span>,    <span class="cm"># 11</span>
+    <span class="st">'a lidar scan of flat ground'</span>,                 <span class="cm"># 12</span>
+    <span class="st">'a lidar scan of a sidewalk pavement'</span>,         <span class="cm"># 13</span>
+    <span class="st">'a lidar scan of terrain'</span>,                    <span class="cm"># 14</span>
+    <span class="st">'a lidar scan of manmade structures'</span>,          <span class="cm"># 15</span>
+    <span class="st">'a lidar scan of vegetation and trees'</span>,        <span class="cm"># 16</span>
+]  <span class="cm"># 16 total: 10 things + 6 stuff, matching nuScenes semantic IDs 1-16</span>
+
+model, _, _ = open_clip.create_model_and_transforms(<span class="st">'ViT-L-14'</span>, pretrained=<span class="st">'openai'</span>)
+model = model.cuda().eval()
+
+<span class="kw">with</span> torch.no_grad():
+    tokens     = open_clip.tokenize(PROMPTS).cuda()
+    embeds     = model.encode_text(tokens).float()       <span class="cm"># [16, 768]</span>
+    prototypes = F.normalize(embeds, dim=-<span class="nm">1</span>)           <span class="cm"># [16, 768]</span>
+
+torch.save(prototypes.cpu(), <span class="st">'clip_prototypes_768.pt'</span>)
+
+<span class="cm"># Sanity check: inter-class similarity should be < 0.9</span>
+sims = prototypes @ prototypes.T
+sims.fill_diagonal_(<span class="nm">0</span>)
+<span class="fn">print</span>(<span class="fn">f</span><span class="st">"Max off-diagonal similarity: {sims.max().item():.3f}"</span>)
+<span class="cm"># Expected: 0.75-0.88. If > 0.95, prompts are too similar.</span></pre></div>
+
+  <h2>CLIP token head module</h2>
+  <div class="cw"><div class="ch"><span class="cf">models/clip_token_head.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="kw">import</span> torch, torch.nn <span class="kw">as</span> nn, torch.nn.functional <span class="kw">as</span> F
+
+<span class="kw">class</span> <span class="fn">CLIPTokenHead</span>(nn.Module):
+    <span class="st">"""
+    Predicts a CLIP-space embedding for each decoder query.
+    Supervised during training by cosine distance to class text prototypes.
+    At inference, enables zero-shot classification via cosine similarity.
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d_model=<span class="nm">256</span>, d_clip=<span class="nm">768</span>):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(d_model, d_model),   nn.ReLU(inplace=<span class="nb">True</span>),
+            nn.Linear(d_model, d_model),   nn.ReLU(inplace=<span class="nb">True</span>),
+            nn.Linear(d_model, d_clip),
+        )
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, queries: torch.Tensor) -> torch.Tensor:
+        <span class="st">"""
+        queries: [B, N_q, d_model]
+        returns: [B, N_q, d_clip]  L2-normalized — lives in CLIP space
+        """</span>
+        <span class="kw">return</span> F.normalize(self.mlp(queries), dim=-<span class="nm">1</span>)
+
+<span class="kw">def</span> <span class="fn">token_loss</span>(pred_tokens, prototypes, matched_query_idx, matched_class_idx,
+               stuff_query_offset=<span class="nm">100</span>, n_stuff=<span class="nm">6</span>, n_thing_classes=<span class="nm">10</span>):
+    <span class="st">"""
+    L_token = cosine distance between predicted tokens and class text prototypes.
+    Applied to matched thing queries AND all stuff queries.
+    
+    pred_tokens:        [N_q, d_clip] for one sample
+    prototypes:         [16, d_clip] pre-computed text embeddings
+    matched_query_idx:  row indices from Hungarian (thing queries that were matched)
+    matched_class_idx:  col indices from Hungarian (which GT instance, for getting class)
+    """</span>
+    loss = torch.tensor(<span class="nm">0.0</span>, device=pred_tokens.device)
+
+    <span class="cm"># Thing queries: matched queries only, supervised by their GT class prototype</span>
+    <span class="kw">if</span> len(matched_query_idx) > <span class="nm">0</span>:
+        pred_thing = pred_tokens[matched_query_idx]             <span class="cm"># [M, d_clip]</span>
+        tgt_thing  = prototypes[matched_class_idx]              <span class="cm"># [M, d_clip]</span>
+        loss = loss + (<span class="nm">1</span> - F.cosine_similarity(pred_thing, tgt_thing)).mean()
+
+    <span class="cm"># Stuff queries: always supervised (one per class, pre-assigned)</span>
+    <span class="kw">for</span> k <span class="kw">in</span> range(n_stuff):
+        q_idx   = stuff_query_offset + k                        <span class="cm"># query 100, 101, ..., 105</span>
+        cls_idx = n_thing_classes + k                           <span class="cm"># prototype 10, 11, ..., 15</span>
+        loss = loss + (<span class="nm">1</span> - F.cosine_similarity(
+            pred_tokens[q_idx].unsqueeze(<span class="nm">0</span>),
+            prototypes[cls_idx].unsqueeze(<span class="nm">0</span>)
+        )).mean()
+
+    <span class="kw">return</span> loss / (max(<span class="nm">1</span>, len(matched_query_idx)) + n_stuff)</pre></div>
+</div></div>
+
+<!-- ====== PAGE: CAMERA ====== -->
+<div id="page-camera" class="page"><div class="wrap">
+  <h1>Step 4 — Camera cross-attention</h1>
+  <p class="lead">Camera features are used as K,V in a cross-attention block injected into each decoder layer. Two encoder options are supported: <strong>EVA-CLIP ViT-L/14</strong> (primary, MIM-pretrained, richer spatial features) and <strong>CLIP ViT-L/14</strong> (fallback, simpler). Both run online during training and inference — no caching, no blob storage needed.</p>
+
+  <div class="note ok"><div class="ni">✓</div><div class="nb2"><strong>Design decision: online inference, no caching.</strong> Both EVA-CLIP and CLIP ViT-L/14 run as frozen GPU models each training step. No pre-extraction pipeline, no blob storage, no pre-warming. Training is ~45% slower than with caching but avoids all storage infrastructure. The ablation between EVA-CLIP and CLIP is a free extra row.</div></div>
+
+  <h2>Encoder comparison — EVA-CLIP vs CLIP ViT-L/14</h2>
+  <table>
+    <tr><th>Property</th><th>EVA-CLIP ViT-L/14 (primary)</th><th>CLIP ViT-L/14 (fallback)</th></tr>
+    <tr><td>Output dimension</td><td class="c">768-d</td><td class="c">768-d</td></tr>
+    <tr><td>Tokens per cam @ 336px</td><td class="g">24×24 = 576</td><td class="w">16×16 = 256</td></tr>
+    <tr><td>Pretraining</td><td class="g">CLIP contrastive + MIM (masked image modeling)</td><td class="w">CLIP contrastive only</td></tr>
+    <tr><td>Spatial patch quality</td><td class="g">High — MIM forces local structure understanding</td><td class="w">Medium — patches tuned for CLS, not regions</td></tr>
+    <tr><td>CLIP text compatibility</td><td class="g">Same 768-d space as CLIP ViT-L text encoder</td><td class="g">Native</td></tr>
+    <tr><td>Backbone alignment</td><td class="g">Closest to OpenSeg feature space (CLIP family + spatial)</td><td class="w">Standard CLIP — some distribution gap</td></tr>
+    <tr><td>Online time per image</td><td class="w">~40ms @ 336px (A100, fp16)</td><td class="g">~30ms @ 224px (A100, fp16)</td></tr>
+    <tr><td>6 cams × batch=2 overhead</td><td class="w">~480ms/step</td><td class="g">~360ms/step</td></tr>
+    <tr><td>load via open_clip</td><td class="g">'EVA02-L-14', pretrained='merged2b_s4b_b131k'</td><td class="g">'ViT-L-14', pretrained='openai'</td></tr>
+    <tr><td>cam_proj input dim</td><td class="c">768</td><td class="c">768</td></tr>
+    <tr><td>Expected PQ contribution</td><td class="g">+5–8 over LiDAR-only</td><td class="w">+3–6 over LiDAR-only</td></tr>
+  </table>
+
+  <div class="note info"><div class="ni">i</div><div class="nb2"><strong>Same cam_proj layer for both.</strong> Both encoders output 768-d. The <code>cam_proj</code> Linear(768→256) inside each decoder layer works identically for either. Switching between them is a one-line change in the config — no architecture changes needed.</div></div>
+
+  <h2>Online camera encoder — unified class for both options</h2>
+  <div class="cw"><div class="ch"><span class="cf">models/camera_encoder.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="kw">import</span> open_clip, torch, torch.nn.functional <span class="kw">as</span> F
+<span class="kw">from</span> PIL <span class="kw">import</span> Image
+<span class="kw">from</span> torchvision <span class="kw">import</span> transforms
+
+<span class="cm"># ── Encoder configs ──</span>
+ENCODER_CONFIGS = {
+    <span class="st">'eva_clip'</span>: {
+        <span class="st">'model_name'</span>:  <span class="st">'EVA02-L-14'</span>,
+        <span class="st">'pretrained'</span>:  <span class="st">'merged2b_s4b_b131k'</span>,
+        <span class="st">'input_size'</span>:  <span class="nm">336</span>,   <span class="cm"># 24×24 = 576 tokens per camera</span>
+        <span class="st">'patch_size'</span>:  <span class="nm">14</span>,    <span class="cm"># 336/14 = 24 patches per side</span>
+        <span class="st">'d_clip'</span>:      <span class="nm">768</span>,
+        <span class="st">'n_patches'</span>:   <span class="nm">576</span>,   <span class="cm"># 24 × 24</span>
+    },
+    <span class="st">'clip_vit_l14'</span>: {
+        <span class="st">'model_name'</span>:  <span class="st">'ViT-L-14'</span>,
+        <span class="st">'pretrained'</span>:  <span class="st">'openai'</span>,
+        <span class="st">'input_size'</span>:  <span class="nm">224</span>,   <span class="cm"># 16×16 = 256 tokens per camera</span>
+        <span class="st">'patch_size'</span>:  <span class="nm">14</span>,    <span class="cm"># 224/14 = 16 patches per side</span>
+        <span class="st">'d_clip'</span>:      <span class="nm">768</span>,
+        <span class="st">'n_patches'</span>:   <span class="nm">256</span>,   <span class="cm"># 16 × 16</span>
+    },
+}
+
+<span class="kw">class</span> <span class="fn">OnlineCameraEncoder</span>:
+    <span class="st">"""
+    Runs camera encoder online every training step.
+    No pre-caching needed — extracts patch tokens from CLIP/EVA-CLIP ViT.
+    
+    EVA-CLIP (primary):   576 tokens/cam @ 336px, richer spatial features
+    CLIP ViT-L/14 (fallback): 256 tokens/cam @ 224px, faster
+    
+    Both output 768-d patch tokens in CLIP-compatible space.
+    Use as K,V in camera cross-attention decoder layers.
+    """</span>
+
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, encoder_type: str = <span class="st">'eva_clip'</span>, device: str = <span class="st">'cuda'</span>):
+        cfg = ENCODER_CONFIGS[encoder_type]
+        self.cfg    = cfg
+        self.device = device
+        self.d_clip = cfg[<span class="st">'d_clip'</span>]
+        self.n_patches_per_cam = cfg[<span class="st">'n_patches'</span>]
+        self.n_total_tokens    = <span class="nm">6</span> * cfg[<span class="st">'n_patches'</span>]  <span class="cm"># 6 cameras</span>
+
+        <span class="cm"># Load model — frozen, fp16, eval mode</span>
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            cfg[<span class="st">'model_name'</span>], pretrained=cfg[<span class="st">'pretrained'</span>]
+        )
+        self.model     = model.to(device).half().eval()
+        self.preprocess = preprocess
+        <span class="kw">for</span> p <span class="kw">in</span> self.model.parameters():
+            p.requires_grad_(<span class="nb">False</span>)
+
+        <span class="cm"># Resize transform to correct input size for this encoder</span>
+        self.resize = transforms.Compose([
+            transforms.Resize((cfg[<span class="st">'input_size'</span>], cfg[<span class="st">'input_size'</span>])),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[<span class="nm">0.48145466</span>, <span class="nm">0.4578275</span>,  <span class="nm">0.40821073</span>],
+                std= [<span class="nm">0.26862954</span>, <span class="nm">0.26130258</span>, <span class="nm">0.27577711</span>]
+            ),
+        ])
+        <span class="fn">print</span>(<span class="fn">f</span><span class="st">"OnlineCameraEncoder: {encoder_type} | "</span>
+              <span class="fn">f</span><span class="st">"{cfg['input_size']}px | {cfg['n_patches']} tokens/cam | d={cfg['d_clip']}"</span>)
+
+    @torch.no_grad()
+    <span class="kw">def</span> <span class="fn">_extract_patch_tokens</span>(self, img_t: torch.Tensor) -> torch.Tensor:
+        <span class="st">"""
+        Extract spatial patch tokens from ViT (drop CLS token).
+        Works for both CLIP ViT-L/14 and EVA-CLIP ViT-L/14.
+        img_t: [B, 3, H, W] fp16
+        Returns: [B, N_patches, d_clip] normalised
+        """</span>
+        v = self.model.visual
+
+        <span class="cm"># --- ViT forward pass ---</span>
+        x = v.conv1(img_t)                                <span class="cm"># [B, C, P, P] patch embed</span>
+        x = x.reshape(x.shape[<span class="nm">0</span>], x.shape[<span class="nm">1</span>], -<span class="nm">1</span>).permute(<span class="nm">0</span>, <span class="nm">2</span>, <span class="nm">1</span>)  <span class="cm"># [B, N, C]</span>
+        cls = v.class_embedding.to(x.dtype).unsqueeze(<span class="nm">0</span>).unsqueeze(<span class="nm">0</span>)
+        x   = torch.cat([cls.expand(x.shape[<span class="nm">0</span>], -<span class="nm">1</span>, -<span class="nm">1</span>), x], dim=<span class="nm">1</span>)
+        x   = x + v.positional_embedding.to(x.dtype)
+        x   = v.ln_pre(x)
+        x   = v.transformer(x)                            <span class="cm"># [B, N+1, C]</span>
+
+        <span class="cm"># Drop CLS token, keep only patch tokens</span>
+        patch_tokens = x[:, <span class="nm">1</span>:]                          <span class="cm"># [B, N_patches, C]</span>
+        patch_tokens = v.ln_post(patch_tokens)
+        <span class="kw">if</span> v.proj <span class="kw">is not</span> <span class="nb">None</span>:
+            patch_tokens = patch_tokens @ v.proj           <span class="cm"># [B, N_patches, d_clip]</span>
+
+        <span class="kw">return</span> F.normalize(patch_tokens.float(), dim=-<span class="nm">1</span>)  <span class="cm"># L2 normalise</span>
+
+    @torch.no_grad()
+    <span class="kw">def</span> <span class="fn">encode_cameras</span>(self, cam_image_paths: list) -> torch.Tensor:
+        <span class="st">"""
+        Encode all 6 nuScenes cameras for one sample.
+        cam_image_paths: list of 6 image file paths
+        Returns: [1, 6*N_patches, d_clip]
+            EVA-CLIP:   [1, 3456, 768]   (6 × 576)
+            CLIP ViT-L: [1, 1536, 768]   (6 × 256)
+        """</span>
+        all_patches = []
+        <span class="kw">for</span> path <span class="kw">in</span> cam_image_paths:
+            img   = Image.open(path).convert(<span class="st">'RGB'</span>)
+            img_t = self.resize(img).unsqueeze(<span class="nm">0</span>).to(self.device).half()
+            patch = self._extract_patch_tokens(img_t)   <span class="cm"># [1, N_patches, 768]</span>
+            all_patches.append(patch)
+
+        <span class="cm"># Concatenate all cameras: [1, 6*N_patches, 768]</span>
+        <span class="kw">return</span> torch.cat(all_patches, dim=<span class="nm">1</span>)
+
+    @torch.no_grad()
+    <span class="kw">def</span> <span class="fn">encode_batch</span>(self, batch_cam_paths: list) -> torch.Tensor:
+        <span class="st">"""
+        Encode cameras for a batch of samples.
+        batch_cam_paths: list of B lists, each containing 6 paths
+        Returns: [B, 6*N_patches, d_clip]
+        
+        Note: runs sequentially per sample — GPU is busy with this.
+        DataLoader prefetch does NOT help here (GPU-only operation).
+        Profile overhead before full training.
+        """</span>
+        <span class="kw">return</span> torch.cat([
+            self.encode_cameras(paths) <span class="kw">for</span> paths <span class="kw">in</span> batch_cam_paths
+        ], dim=<span class="nm">0</span>)
+
+
+<span class="cm"># ─── VRAM + time profile ───────────────────────────────────────────────────</span>
+<span class="kw">def</span> <span class="fn">profile_camera_encoder</span>(encoder_type=<span class="st">'eva_clip'</span>, batch_size=<span class="nm">2</span>, n_cams=<span class="nm">6</span>):
+    <span class="kw">import</span> time
+    enc = OnlineCameraEncoder(encoder_type)
+    dummy_paths = [<span class="st">'/tmp/test.jpg'</span>] * n_cams  <span class="cm"># replace with real path</span>
+    <span class="cm"># warm up</span>
+    <span class="kw">for</span> _ <span class="kw">in</span> range(<span class="nm">3</span>): enc.encode_cameras(dummy_paths)
+    torch.cuda.synchronize()
+    t0 = time.time()
+    <span class="kw">for</span> _ <span class="kw">in</span> range(<span class="nm">10</span>): enc.encode_batch([dummy_paths] * batch_size)
+    torch.cuda.synchronize()
+    ms = (time.time() - t0) * <span class="nm">100</span>
+    mem = torch.cuda.max_memory_allocated() / <span class="nm">1e9</span>
+    out = enc.encode_cameras(dummy_paths)
+    <span class="fn">print</span>(<span class="fn">f</span><span class="st">"{encoder_type}: {ms:.0f}ms/step | {mem:.2f}GB VRAM | output {out.shape}"</span>)
+    <span class="cm"># EVA-CLIP expected:   ~480ms/step | ~3.2GB | [1, 3456, 768]</span>
+    <span class="cm"># CLIP ViT-L expected: ~360ms/step | ~2.8GB | [1, 1536, 768]</span></pre></div>
+
+  <h2>Camera-enhanced decoder layer (unchanged — works for both encoders)</h2>
+  <div class="note info"><div class="ni">i</div><div class="nb2">The <code>CamEnhancedDecoderLayer</code> is identical for EVA-CLIP and CLIP ViT-L/14 — both produce 768-d tokens. The <code>cam_proj</code> Linear(768→256) projects either to decoder space. The only difference is the number of K,V tokens: 3456 for EVA-CLIP vs 1536 for CLIP. More tokens = slightly higher attention memory but better cross-attention granularity.</div></div>
+  <div class="cw"><div class="ch"><span class="cf">models/cam_decoder_layer.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="kw">import</span> torch, torch.nn <span class="kw">as</span> nn
+
+<span class="kw">class</span> <span class="fn">CamEnhancedDecoderLayer</span>(nn.Module):
+    <span class="st">"""
+    MaskPLS decoder layer + camera cross-attention.
+    Works with EVA-CLIP or CLIP ViT-L/14 — both produce 768-d tokens.
+
+    EVA-CLIP:   cam_kv shape [B, 3456, 768]  (6 cams × 576 patches)
+    CLIP ViT-L: cam_kv shape [B, 1536, 768]  (6 cams × 256 patches)
+
+    cam_proj handles both via Linear(768→256).
+    """</span>
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, d_model=<span class="nm">256</span>, n_heads=<span class="nm">8</span>, d_ffn=<span class="nm">1024</span>, d_clip=<span class="nm">768</span>, dropout=<span class="nm">0.0</span>):
+        super().__init__()
+        self.self_attn   = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=<span class="nb">True</span>)
+        self.lidar_xattn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=<span class="nb">True</span>)
+        <span class="cm"># d_clip=768 works for both EVA-CLIP and CLIP ViT-L/14</span>
+        self.cam_proj    = nn.Linear(d_clip, d_model, bias=<span class="nb">False</span>)
+        self.cam_xattn   = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=<span class="nb">True</span>)
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_ffn), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(d_ffn, d_model), nn.Dropout(dropout),
+        )
+        self.n1 = nn.LayerNorm(d_model); self.n2 = nn.LayerNorm(d_model)
+        self.n3 = nn.LayerNorm(d_model); self.n4 = nn.LayerNorm(d_model)
+
+    <span class="kw">def</span> <span class="fn">forward</span>(self, q, lidar_kv, cam_kv=<span class="nb">None</span>):
+        <span class="st">"""
+        q:        [B, 106, 256]
+        lidar_kv: [B, V,   256]   adapted backbone features
+        cam_kv:   [B, P,   768]   camera patch tokens (P=3456 EVA or 1536 CLIP)
+                                  or None (camera dropout)
+        """</span>
+        q = self.n1(q + self.self_attn(q, q, q)[<span class="nm">0</span>])
+        q = self.n2(q + self.lidar_xattn(q, lidar_kv, lidar_kv)[<span class="nm">0</span>])
+        <span class="kw">if</span> cam_kv <span class="kw">is not</span> <span class="nb">None</span>:
+            kv = self.cam_proj(cam_kv)      <span class="cm"># [B, P, 256] — same op for both encoders</span>
+            q  = self.n3(q + self.cam_xattn(q, kv, kv)[<span class="nm">0</span>])
+        <span class="kw">return</span> self.n4(q + self.ffn(q))</pre></div>
+
+  <h2>Training loop integration — online camera encoding</h2>
+  <div class="note warn"><div class="ni">!</div><div class="nb2"><strong>Key difference from cached approach:</strong> Camera encoding happens inside the training loop on the GPU — it cannot be parallelised with CPU DataLoader workers. Profile your step time carefully before running full nuScenes. Run <code>profile_camera_encoder()</code> on a few batches first.</div></div>
+  <div class="cw"><div class="ch"><span class="cf">train_stage2_camera.py — camera section</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="cm"># Initialise: choose encoder type here — only one line changes between runs</span>
+ENCODER_TYPE = <span class="st">'eva_clip'</span>      <span class="cm"># Run A2·B3a: EVA-CLIP</span>
+<span class="cm"># ENCODER_TYPE = 'clip_vit_l14'  # Run A2·B3b: CLIP ViT-L/14 (fallback ablation)</span>
+
+cam_encoder = OnlineCameraEncoder(ENCODER_TYPE, device=<span class="st">'cuda'</span>)
+<span class="cm"># cam_encoder is frozen — no params in optimizer</span>
+
+CAM_DROPOUT_P = <span class="nm">0.3</span>   <span class="cm"># 30% of steps: no camera → model learns LiDAR-only fallback</span>
+
+<span class="kw">for</span> epoch <span class="kw">in</span> range(EPOCHS):
+    decoder.train()
+    <span class="kw">for</span> batch <span class="kw">in</span> loader:
+        <span class="cm"># ── 1. LiDAR path (frozen backbone, no grad) ──</span>
+        <span class="kw">with</span> torch.no_grad():
+            sparse  = ME.SparseTensor(batch[<span class="st">'feats'</span>].cuda(),
+                                       coordinates=batch[<span class="st">'coords'</span>].cuda())
+            f_clip, f_adapt = backbone(sparse)        <span class="cm"># [V, 768], [V, 256]</span>
+            lidar_kv = f_adapt.unsqueeze(<span class="nm">0</span>)           <span class="cm"># [1, V, 256]</span>
+
+        <span class="cm"># ── 2. Camera path (online, frozen encoder, no grad) ──</span>
+        cam_kv = <span class="nb">None</span>
+        <span class="kw">if</span> torch.rand(<span class="nm">1</span>).item() >= CAM_DROPOUT_P:
+            <span class="cm"># cam_image_paths: list of 6 paths per sample, from dataset __getitem__</span>
+            <span class="kw">with</span> torch.no_grad():
+                cam_kv = cam_encoder.encode_cameras(
+                    batch[<span class="st">'cam_paths'</span>][<span class="nm">0</span>]          <span class="cm"># list of 6 image paths for sample 0</span>
+                )                                     <span class="cm"># [1, 3456, 768] EVA or [1, 1536, 768] CLIP</span>
+
+        <span class="cm"># ── 3. Decoder forward (has grad — only decoder trains) ──</span>
+        <span class="kw">with</span> torch.cuda.amp.autocast():
+            layer_outs = decoder(lidar_kv, cam_kv, training=<span class="nb">True</span>)
+            loss = compute_total_loss(layer_outs[-<span class="nm">1</span>], batch, prototypes)
+            <span class="kw">for</span> aux <span class="kw">in</span> layer_outs[:-<span class="nm">1</span>]:
+                loss += <span class="nm">0.5</span> * compute_total_loss(aux, batch, prototypes)
+
+        opt.zero_grad(set_to_none=<span class="nb">True</span>)
+        scaler.scale(loss).backward()
+        scaler.unscale_(opt)
+        nn.utils.clip_grad_norm_(decoder.parameters(), <span class="nm">1.0</span>)
+        scaler.step(opt); scaler.update()
+
+
+<span class="cm"># ── Dataset: add cam_paths to __getitem__ ──</span>
+<span class="kw">def</span> <span class="fn">__getitem__</span>(self, idx):
+    <span class="cm"># ... existing code ...</span>
+    CAMS = [<span class="st">'CAM_FRONT'</span>,<span class="st">'CAM_FRONT_LEFT'</span>,<span class="st">'CAM_FRONT_RIGHT'</span>,
+            <span class="st">'CAM_BACK'</span>,<span class="st">'CAM_BACK_LEFT'</span>,<span class="st">'CAM_BACK_RIGHT'</span>]
+    cam_paths = [
+        self.dataroot + self.nusc.get(<span class="st">'sample_data'</span>, sample[<span class="st">'data'</span>][c])[<span class="st">'filename'</span>]
+        <span class="kw">for</span> c <span class="kw">in</span> CAMS
+    ]
+    <span class="kw">return</span> {
+        <span class="cm"># ... existing keys ...</span>
+        <span class="st">'cam_paths'</span>: cam_paths,   <span class="cm"># NEW: 6 image paths, loaded by encoder at train time</span>
+    }</pre></div>
+
+  <h2>Memory and timing budget</h2>
+  <table>
+    <tr><th>Component</th><th>EVA-CLIP (A2·B3a)</th><th>CLIP ViT-L/14 (A2·B3b)</th></tr>
+    <tr><td>Encoder model VRAM</td><td class="c">~3.5 GB (fp16)</td><td class="c">~2.8 GB (fp16)</td></tr>
+    <tr><td>Camera tokens per step (batch=2)</td><td class="c">2 × 3456 × 768 = ~42MB</td><td class="c">2 × 1536 × 768 = ~19MB</td></tr>
+    <tr><td>Decoder VRAM (6 layers × cam attn)</td><td class="c">~34 GB</td><td class="c">~28 GB</td></tr>
+    <tr><td>Total VRAM (batch=2)</td><td class="w">~58 GB</td><td class="g">~48 GB</td></tr>
+    <tr><td>Online encoding time per step</td><td class="w">~480ms</td><td class="g">~360ms</td></tr>
+    <tr><td>Training step total (0.8s base)</td><td class="w">~1.28s</td><td class="g">~1.16s</td></tr>
+    <tr><td>30 epochs × 20K steps</td><td class="w">~106h</td><td class="g">~97h</td></tr>
+    <tr><td>If VRAM tight: reduce batch to 1</td><td class="g">~36 GB — fits easily</td><td class="g">~28 GB — comfortable</td></tr>
+  </table>
+
+  <div class="note warn"><div class="ni">!</div><div class="nb2"><strong>If VRAM OOM with batch=2:</strong> Reduce batch to 1 and double gradient accumulation steps. This preserves effective batch size. Add <code>scaler.scale(loss / ACCUMULATE_STEPS).backward()</code> and step optimizer every N steps. Alternatively, reduce camera input resolution — EVA-CLIP at 224px gives 16×16 = 256 tokens/cam instead of 576, reducing camera VRAM by ~55%.</div></div>
+
+  <h2>Gradient accumulation for small batch (if needed)</h2>
+  <div class="cw"><div class="ch"><span class="cf">gradient accumulation snippet</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre>ACCUMULATE_STEPS = <span class="nm">4</span>   <span class="cm"># effective batch = 1 × 4 = 4</span>
+
+<span class="kw">for</span> i, batch <span class="kw">in</span> enumerate(loader):
+    loss = compute_loss(batch) / ACCUMULATE_STEPS
+    scaler.scale(loss).backward()
+
+    <span class="kw">if</span> (i + <span class="nm">1</span>) % ACCUMULATE_STEPS == <span class="nm">0</span>:
+        scaler.unscale_(opt)
+        nn.utils.clip_grad_norm_(decoder.parameters(), <span class="nm">1.0</span>)
+        scaler.step(opt); scaler.update()
+        opt.zero_grad(set_to_none=<span class="nb">True</span>)</pre></div>
+</div></div>
+
+<!-- ====== PAGE: TRAINING ====== -->
+<div id="page-train" class="page"><div class="wrap">
+  <h1>Training pipeline — all runs</h1>
+  <p class="lead">Five sequential training runs. Each is one row in the ablation table. Run in order — later runs depend on earlier checkpoints. Runs 4a and 4b differ only in the camera encoder type; everything else identical.</p>
+
+
+  <div class="note warn"><div class="ni">!</div><div class="nb2"><strong>MinkowskiEngine memory fragmentation.</strong> ME caches a coordinate hash table that grows across epochs and causes OOM even with batch=1 on a 96 GB A100 — confirmed in Progress.md §10. Workaround: restart training every ~10 epochs by saving checkpoint and relaunching. Use <code>--resume checkpoint.pth</code> flag. Script your job to detect epoch count and self-relaunch via <code>bsub</code>.</div></div>
+  <div class="stabs">
+    <div class="stab on" onclick="sw(this,'tr1')">Run 1 — MaskPLS baseline</div>
+    <div class="stab" onclick="sw(this,'tr2')">Run 2 — OpenSeg backbone</div>
+    <div class="stab" onclick="sw(this,'tr3')">Run 3 — + CLIP token head</div>
+    <div class="stab" onclick="sw(this,'tr4a')">Run 4a — + EVA-CLIP cam</div>
+    <div class="stab" onclick="sw(this,'tr4b')">Run 4b — + CLIP cam (ablation)</div>
+  </div>
+
+  <div id="tr1" class="sp on">
+    <div class="note info"><div class="ni">i</div><div class="nb2"><strong>Ablation A1·B1:</strong> MaskPLS geometry-only. No text, no camera. Establishes the floor — quantifies how much OpenSeg backbone and camera each contribute.</div></div>
+    <table>
+      <tr><th>Parameter</th><th>Value</th></tr>
+      <tr><td>Backbone</td><td class="c">MinkUNet34C (original MaskPLS, geometry-only)</td></tr>
+      <tr><td>Camera encoder</td><td class="b">None</td></tr>
+      <tr><td>CLIP head</td><td class="b">None</td></tr>
+      <tr><td>Dataset</td><td class="c">nuScenes mini smoke test → nuScenes full</td></tr>
+      <tr><td>Batch size</td><td class="c">4</td></tr>
+      <tr><td>Optimizer</td><td class="c">AdamW lr=1e-4, wd=0.01</td></tr>
+      <tr><td>Epochs</td><td class="c">30</td></tr>
+      <tr><td>Losses</td><td class="c">L_obj (focal α=0.25 γ=2.0) + L_seg (BCE + 4·Dice)</td></tr>
+      <tr><td>VRAM</td><td class="c">~28 GB</td></tr>
+      <tr><td>Time</td><td class="c">~18h (restart job if OOM from ME fragmentation — known cluster issue)</td></tr>
+      <tr><td>Expected PQ</td><td class="c">~52–60</td></tr>
+    </table>
+  </div>
+
+  <div id="tr2" class="sp">
+    <div class="note info"><div class="ni">i</div><div class="nb2"><strong>Ablation A2·B1:</strong> Does a CLIP-aligned backbone improve panoptic quality over geometry-only? The adapter (Linear(d_clip→256)) is the only new trainable component on the backbone side.</div></div>
+    <table>
+      <tr><th>Parameter</th><th>Value</th></tr>
+      <tr><td>Backbone</td><td class="c">OpenSceneFrozenBackbone (OpenSeg-distilled, FROZEN)</td></tr>
+      <tr><td>New component</td><td class="c">Adapter Linear(d_clip→256) + LayerNorm — trainable</td></tr>
+      <tr><td>Init decoder weights</td><td class="c">From Run 1 checkpoint (warm start)</td></tr>
+      <tr><td>Camera encoder</td><td class="b">None</td></tr>
+      <tr><td>Optimizer</td><td class="c">AdamW: adapter lr=5e-4, decoder lr=1e-4</td></tr>
+      <tr><td>Losses</td><td class="c">L_obj + L_seg (same as Run 1)</td></tr>
+      <tr><td>VRAM</td><td class="c">~28 GB (frozen backbone; 0.05m voxels increase KV size)</td></tr>
+      <tr><td>Time</td><td class="c">~15h</td></tr>
+      <tr><td>Expected PQ</td><td class="c">~55–64 (+3–5 over Run 1)</td></tr>
+    </table>
+  </div>
+
+  <div id="tr3" class="sp">
+    <div class="note info"><div class="ni">i</div><div class="nb2"><strong>A2·B1 + token head:</strong> Add CLIP token head — enables text-guided inference. Important: λ_token starts at 0.05 and ramps up. Monitor for token collapse from epoch 1.</div></div>
+    <table>
+      <tr><th>Parameter</th><th>Value</th></tr>
+      <tr><td>Backbone</td><td class="c">Same frozen OpenScene backbone from Run 2</td></tr>
+      <tr><td>New component</td><td class="c">CLIPTokenHead: 3-layer MLP(256→256→256→768), L2-normalised output</td></tr>
+      <tr><td>Init</td><td class="c">Decoder from Run 2 checkpoint + random token head</td></tr>
+      <tr><td>λ_token schedule</td><td class="c">Ep 1–10: 0.05 · Ep 11–20: 0.2 · Ep 21+: 0.3</td></tr>
+      <tr><td>Losses</td><td class="c">L_obj + L_seg + λ_token · L_token</td></tr>
+      <tr><td>Token collapse monitor</td><td class="c">Log argmax(cos(ĝ, prototypes)) distribution every 5 epochs</td></tr>
+      <tr><td>VRAM</td><td class="c">~30 GB</td></tr>
+      <tr><td>Time</td><td class="c">~16h</td></tr>
+      <tr><td>Expected PQ</td><td class="c">~53–63 (token head adds small overhead, masks should not degrade)</td></tr>
+    </table>
+  </div>
+
+  <div id="tr4a" class="sp">
+    <div class="note ok"><div class="ni">✓</div><div class="nb2"><strong>A2·B3a — primary novel result.</strong> EVA-CLIP for camera K,V. Online inference — no caching. Expected to show largest PQ improvement, particularly on RQ (classification), validating that richer spatial camera features help beyond just presence of camera.</div></div>
+    <table>
+      <tr><th>Parameter</th><th>Value</th></tr>
+      <tr><td>Camera encoder</td><td class="c">EVA-CLIP ViT-L/14 @ 336px — 576 tokens/cam, 3456 total</td></tr>
+      <tr><td>load via</td><td class="c">open_clip.create_model_and_transforms('EVA02-L-14', pretrained='merged2b_s4b_b131k')</td></tr>
+      <tr><td>Camera K,V shape</td><td class="c">[B, 3456, 768]</td></tr>
+      <tr><td>Decoder layers</td><td class="c">Replace TransformerDecoderLayer → CamEnhancedDecoderLayer</td></tr>
+      <tr><td>Init decoder</td><td class="c">From Run 3 checkpoint (all weights transfer except cam_xattn + cam_proj which are new)</td></tr>
+      <tr><td>Camera dropout</td><td class="c">p=0.3 per step (sets cam_kv=None)</td></tr>
+      <tr><td>Optimizer</td><td class="c">AdamW: adapter lr=5e-4, decoder (non-cam) lr=1e-4, cam layers lr=1e-3, token head lr=1e-4</td></tr>
+      <tr><td>Batch size</td><td class="c">2 (camera tokens increase memory)</td></tr>
+      <tr><td>VRAM</td><td class="c">~58 GB — fits in 96 GB comfortably (batch=2)</td></tr>
+      <tr><td>Online encoding time</td><td class="c">~480ms/step (EVA-CLIP on GPU, not parallelisable)</td></tr>
+      <tr><td>Total step time</td><td class="c">~1.28s (0.8s training + 0.48s EVA-CLIP)</td></tr>
+      <tr><td>Time</td><td class="c">~106h for 30 epochs</td></tr>
+      <tr><td>Expected PQ</td><td class="c">~60–68 (+5–8 over Run 2)</td></tr>
+    </table>
+  </div>
+
+  <div id="tr4b" class="sp">
+    <div class="note info"><div class="ni">i</div><div class="nb2"><strong>A2·B3b — ablation row: does EVA-CLIP matter over vanilla CLIP?</strong> One-line change from Run 4a. Tests whether MIM pretraining in EVA-CLIP actually helps vs standard CLIP patches. The delta (expected +1–3 PQ) is the contribution of better spatial features to cross-attention quality.</div></div>
+    <table>
+      <tr><th>Parameter</th><th>Value</th></tr>
+      <tr><td>Camera encoder</td><td class="c">CLIP ViT-L/14 @ 224px — 256 tokens/cam, 1536 total</td></tr>
+      <tr><td>load via</td><td class="c">open_clip.create_model_and_transforms('ViT-L-14', pretrained='openai')</td></tr>
+      <tr><td>Camera K,V shape</td><td class="c">[B, 1536, 768]</td></tr>
+      <tr><td>Everything else</td><td class="c">Identical to Run 4a — only encoder_type changes</td></tr>
+      <tr><td>Online encoding time</td><td class="c">~360ms/step (faster — fewer tokens)</td></tr>
+      <tr><td>VRAM</td><td class="c">~48 GB — fits in 96 GB with headroom (batch=2)</td></tr>
+      <tr><td>Time</td><td class="c">~97h for 30 epochs</td></tr>
+      <tr><td>Expected PQ</td><td class="c">~57–65 (slightly below Run 4a)</td></tr>
+    </table>
+    <div class="cw"><div class="ch"><span class="cf">one-line difference between Run 4a and 4b</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="cm"># Run 4a (EVA-CLIP)</span>
+cam_encoder = OnlineCameraEncoder(<span class="st">'eva_clip'</span>, device=<span class="st">'cuda'</span>)
+
+<span class="cm"># Run 4b (CLIP ViT-L/14) — literally just change this string</span>
+cam_encoder = OnlineCameraEncoder(<span class="st">'clip_vit_l14'</span>, device=<span class="st">'cuda'</span>)</pre></div>
+  </div>
+</div></div>
+
+<!-- ====== PAGE: INFERENCE ====== -->
+<div id="page-inference" class="page"><div class="wrap">
+  <h1>Inference — segment all, filter with text</h1>
+  <p class="lead">At inference, both the camera encoder and CLIP text encoder run live. No pre-cached anything. The model produces all masks, predicts a CLIP token per mask, then text prompts are used to filter or label them.</p>
+
+  <h2>Inference modes</h2>
+  <div class="stabs">
+    <div class="stab on" onclick="sw(this,'inf1')">Mode 1 — panoptic map</div>
+    <div class="stab" onclick="sw(this,'inf2')">Mode 2 — text retrieval</div>
+    <div class="stab" onclick="sw(this,'inf3')">Mode 3 — LiDAR-only fallback</div>
+  </div>
+
+  <div id="inf1" class="sp on">
+    <p>Label every surviving mask with its closest text class. Returns a full panoptic scene segmentation with nuScenes (or any) vocabulary.</p>
+    <div class="cw"><div class="ch"><span class="cf">inference/panoptic_mode.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="kw">import</span> open_clip, torch, torch.nn.functional <span class="kw">as</span> F, numpy <span class="kw">as</span> np
+
+NUSCENES_VOCAB = [
+    <span class="st">'barrier'</span>,<span class="st">'bicycle'</span>,<span class="st">'bus'</span>,<span class="st">'car'</span>,<span class="st">'construction vehicle'</span>,
+    <span class="st">'motorcycle'</span>,<span class="st">'pedestrian'</span>,<span class="st">'traffic cone'</span>,<span class="st">'trailer'</span>,<span class="st">'truck'</span>,
+    <span class="st">'driveable surface'</span>,<span class="st">'flat ground'</span>,<span class="st">'sidewalk'</span>,
+    <span class="st">'terrain'</span>,<span class="st">'manmade structure'</span>,<span class="st">'vegetation'</span>
+]
+
+@torch.no_grad()
+<span class="kw">def</span> <span class="fn">run_panoptic</span>(backbone, decoder, token_head, cam_encoder,
+                  sparse_input, cam_paths, vocab=<span class="nb">None</span>, obj_thresh=<span class="nm">0.5</span>):
+    vocab = vocab <span class="kw">or</span> NUSCENES_VOCAB
+
+    <span class="cm"># ── Text vocabulary encoding ──</span>
+    clip_text, _, _ = open_clip.create_model_and_transforms(<span class="st">'ViT-L-14'</span>, pretrained=<span class="st">'openai'</span>)
+    clip_text = clip_text.cuda().eval()
+    text_tokens = open_clip.tokenize(vocab).cuda()
+    text_embeds = F.normalize(clip_text.encode_text(text_tokens).float(), dim=-<span class="nm">1</span>)  <span class="cm"># [C, 768]</span>
+
+    <span class="cm"># ── LiDAR encoding ──</span>
+    f_clip, f_adapt = backbone(sparse_input)      <span class="cm"># [V, 768], [V, 256]</span>
+
+    <span class="cm"># ── Camera encoding (online — EVA-CLIP or CLIP ViT-L) ──</span>
+    cam_kv = cam_encoder.encode_cameras(cam_paths) <span class="cm"># [1, 3456/1536, 768]</span>
+
+    <span class="cm"># ── Decoder ──</span>
+    layer_outs = decoder(f_adapt.unsqueeze(<span class="nm">0</span>), cam_kv, training=<span class="nb">False</span>)
+    out = layer_outs[-<span class="nm">1</span>]
+    scores = out[<span class="st">'objectness'</span>][<span class="nm">0</span>, :, <span class="nm">0</span>].sigmoid()  <span class="cm"># [106]</span>
+    masks  = out[<span class="st">'masks'</span>][<span class="nm">0</span>].sigmoid() > <span class="nm">0.5</span>       <span class="cm"># [106, V]</span>
+    q_feat = out[<span class="st">'queries'</span>][<span class="nm">0</span>]                      <span class="cm"># [106, 256]</span>
+
+    <span class="cm"># ── CLIP token prediction ──</span>
+    tokens = F.normalize(token_head(q_feat.unsqueeze(<span class="nm">0</span>))[<span class="nm">0</span>], dim=-<span class="nm">1</span>)  <span class="cm"># [106, 768]</span>
+
+    <span class="cm"># ── Filter by objectness ──</span>
+    keep   = scores > obj_thresh
+    tokens = tokens[keep]; masks = masks[keep]; scores = scores[keep]
+
+    <span class="cm"># ── Classify: argmax cosine similarity ──</span>
+    sims    = tokens @ text_embeds.T         <span class="cm"># [M, C]</span>
+    classes = sims.argmax(dim=-<span class="nm">1</span>)           <span class="cm"># [M] class index</span>
+
+    <span class="cm"># ── Flatten to panoptic ──</span>
+    V        = f_adapt.shape[<span class="nm">0</span>]
+    panoptic = torch.zeros(V, dtype=torch.long, device=<span class="st">'cuda'</span>)
+    <span class="kw">for</span> rank, q <span class="kw">in</span> enumerate(scores.argsort(descending=<span class="nb">True</span>)):
+        unassigned = panoptic == <span class="nm">0</span>
+        m = masks[q] & unassigned
+        <span class="kw">if</span> m.sum() == <span class="nm">0</span>: <span class="kw">continue</span>
+        panoptic[m] = (classes[q].item() + <span class="nm">1</span>) * <span class="nm">1000</span> + rank + <span class="nm">1</span>
+
+    <span class="kw">return</span> panoptic.cpu().numpy()  <span class="cm"># [V] — semantic_id*1000 + instance_id</span></pre></div>
+  </div>
+
+  <div id="inf2" class="sp">
+    <p>You provide a single text query. Only masks that match above a threshold are returned. This is the "segment_all_filter_text" inference pattern.</p>
+    <div class="cw"><div class="ch"><span class="cf">inference/text_retrieval.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre>@torch.no_grad()
+<span class="kw">def</span> <span class="fn">retrieve_masks_by_text</span>(result_tokens, result_masks, query: str,
+                             threshold: float = <span class="nm">0.5</span>) -> list:
+    <span class="st">"""
+    result_tokens: [M, 768] predicted CLIP tokens for M surviving masks
+    result_masks:  [M, V]   binary voxel masks
+    query:         text string, e.g. "car" or "ambulance" (zero-shot!)
+    threshold:     cosine similarity cutoff (tune on val: 0.4-0.6)
+    
+    Returns: list of binary numpy arrays, one per matching mask
+    """</span>
+    clip_text, _, _ = open_clip.create_model_and_transforms(<span class="st">'ViT-L-14'</span>, pretrained=<span class="st">'openai'</span>)
+    clip_text = clip_text.cuda().eval()
+    q_emb = F.normalize(
+        clip_text.encode_text(open_clip.tokenize([query]).cuda()).float(), dim=-<span class="nm">1</span>
+    )  <span class="cm"># [1, 768]</span>
+    sims = (result_tokens @ q_emb.T).squeeze(-<span class="nm">1</span>)  <span class="cm"># [M]</span>
+    <span class="kw">return</span> [result_masks[i].cpu().numpy()
+            <span class="kw">for</span> i <span class="kw">in</span> range(len(sims)) <span class="kw">if</span> sims[i] > threshold]
+
+<span class="cm"># Zero-shot examples — these classes were NEVER in training:</span>
+<span class="cm"># retrieve_masks_by_text(tokens, masks, "ambulance")</span>
+<span class="cm"># retrieve_masks_by_text(tokens, masks, "food truck")</span>
+<span class="cm"># retrieve_masks_by_text(tokens, masks, "construction worker")</span></pre></div>
+  </div>
+
+  <div id="inf3" class="sp">
+    <p>Camera is optional at inference. When cameras are unavailable, pass <code>cam_paths=None</code>. Model degrades gracefully due to camera dropout during training (30% of training steps ran without camera).</p>
+    <div class="cw"><div class="ch"><span class="cf">inference/lidar_only_fallback.py</span><span class="cl2">python</span><button class="cbtn">copy</button></div>
+<pre><span class="cm"># LiDAR-only inference: pass cam_kv=None to decoder</span>
+<span class="cm"># Camera cross-attention block is skipped — model still produces panoptic output</span>
+<span class="cm"># Expected PQ degradation: ~5–8 points vs full camera</span>
+
+layer_outs = decoder(
+    f_adapt.unsqueeze(<span class="nm">0</span>),
+    cam_kv=<span class="nb">None</span>,      <span class="cm"># explicitly no camera</span>
+    training=<span class="nb">False</span>
+)
+<span class="cm"># Everything else identical to Mode 1 / Mode 2</span>
+
+<span class="cm"># Report both metrics in thesis:</span>
+<span class="cm">#   PQ with camera:    e.g. 64.2  (primary result)</span>
+<span class="cm">#   PQ without camera: e.g. 58.5  (graceful degradation)</span>
+<span class="cm">#   Delta:             5.7 points — camera contribution</span></pre></div>
+  </div>
+</div></div>
+
+<!-- ====== PAGE: ABLATION ====== -->
+<div id="page-ablation" class="page"><div class="wrap">
+  <h1>Ablation matrix &amp; timeline</h1>
+
+  <h2>Full ablation table — 6 runs, one per row</h2>
+  <p>Chronological build order. Each run depends on the previous checkpoint. Runs 4a/4b differ only in camera encoder type — run 4b immediately after 4a for a free comparison row.</p>
+  <table class="abl">
+    <tr>
+      <th>Run</th><th>Backbone</th><th>Camera encoder</th><th>CLIP head</th>
+      <th>PQ (est.)</th><th>RQ</th><th>SQ</th><th>Key question answered</th>
+    </tr>
+    <tr class="row-a">
+      <td><div class="arow">A1·B1</div>MaskPLS baseline</td>
+      <td>MinkUNet34C geometry-only</td><td class="b">None</td><td class="b">None</td>
+      <td class="c">~52–60</td><td class="c">~65</td><td class="c">~78</td>
+      <td>Floor. Validates pipeline.</td>
+    </tr>
+    <tr class="row-a">
+      <td><div class="arow">A2·B1</div>OpenSeg backbone</td>
+      <td>OpenScene pretrained (frozen)</td><td class="b">None</td><td class="b">None</td>
+      <td class="c">~55–64</td><td class="c">~68</td><td class="c">~79</td>
+      <td>Does CLIP-aligned backbone improve PQ?</td>
+    </tr>
+    <tr class="row-a">
+      <td><div class="arow">A2·B1·T</div>+ CLIP token head</td>
+      <td>OpenScene frozen</td><td class="b">None</td><td class="g">Yes</td>
+      <td class="c">~54–63</td><td class="c">~68</td><td class="c">~79</td>
+      <td>Does token head hurt mask quality?</td>
+    </tr>
+    <tr class="best">
+      <td><div class="arow">A2·B3a</div><strong>+ EVA-CLIP camera</strong></td>
+      <td>OpenScene frozen</td>
+      <td class="g">EVA-CLIP ViT-L/14<br>576 tokens/cam</td>
+      <td class="g">Yes</td>
+      <td class="g">~62–68</td><td class="g">~75</td><td class="g">~80</td>
+      <td>Primary result. Does camera cross-attn help? Best expected PQ.</td>
+    </tr>
+    <tr>
+      <td><div class="arow">A2·B3b</div>+ CLIP ViT-L camera</td>
+      <td>OpenScene frozen</td>
+      <td class="w">CLIP ViT-L/14<br>256 tokens/cam</td>
+      <td class="g">Yes</td>
+      <td class="c">~58–65</td><td class="c">~72</td><td class="c">~79</td>
+      <td>Does EVA-CLIP spatial richness matter vs vanilla CLIP?</td>
+    </tr>
+    <tr>
+      <td><div class="arow">A3·B3a</div>EVA-CLIP backbone (Phase B)</td>
+      <td>EVA-CLIP re-distilled</td>
+      <td class="g">EVA-CLIP ViT-L/14</td>
+      <td class="g">Yes</td>
+      <td class="g">~65–72</td><td class="g">~78</td><td class="g">~81</td>
+      <td>Phase B (separate doc). Does domain-matched backbone help?</td>
+    </tr>
+  </table>
+  <p style="font-size:11px;color:var(--text3);font-family:var(--mono)">PQ ±5. The delta A2·B3a vs A2·B3b isolates EVA-CLIP spatial quality. The delta A2·B3a vs A2·B1 is the camera contribution. Both are publishable findings.</p>
+
+  <h2>Week-by-week timeline</h2>
+  <div class="tl">
+    <div class="tli now">
+      <div class="tw">Apr 2–5 · Days 1–4</div>
+      <div class="tt">Setup + checkpoint inspection + dataset verify</div>
+      <div class="tb2">Install env. Run inspect_checkpoint.py → get d_clip. Run verify_mini.py. Pre-compute clip_prototypes_768.pt. Write NuScenesMaskPLS dataloader and test on 3 samples. Also: install open_clip and verify EVA-CLIP loads (<code>open_clip.create_model_and_transforms('EVA02-L-14', pretrained='merged2b_s4b_b131k')</code>).</div>
+      <ul class="tl-ul">
+        <li>Know d_clip from checkpoint before writing any code</li>
+        <li>EVA-CLIP loads without error and outputs [1, 576, 768] for one camera</li>
+        <li>CLIP ViT-L/14 loads and outputs [1, 256, 768]</li>
+        <li>profile_camera_encoder() gives expected timing numbers</li>
+      </ul>
+    </div>
+    <div class="tli">
+      <div class="tw">Apr 6–9</div>
+      <div class="tt">MaskPLS smoke test on nuScenes mini (Run 1)</div>
+      <div class="tb2">2 epochs. Loss decreases. Hungarian matches exist. Eval runs. Do NOT swap backbone until this passes cleanly.</div>
+    </div>
+    <div class="tli">
+      <div class="tw">Apr 10–13</div>
+      <div class="tt">Backbone swap (Run 2) + CLIP token head (Run 3) on mini</div>
+      <div class="tb2">Load OpenScene checkpoint. Verify adapter forward pass. Add CLIPTokenHead. Wire token_loss with λ_token=0.05. Verify no token collapse on mini after 5 epochs.</div>
+    </div>
+    <div class="tli">
+      <div class="tw">Apr 14–18</div>
+      <div class="tt">Camera cross-attention on mini — Runs 4a and 4b</div>
+      <div class="tb2">Add cam_paths to dataloader. Implement OnlineCameraEncoder for both encoder types. Add CamEnhancedDecoderLayer. Run 5 epochs on mini for EVA-CLIP (4a) — verify PQ improves vs Run 3. Then same 5 epochs for CLIP ViT-L (4b). Compare mini results to confirm EVA-CLIP > CLIP.</div>
+    </div>
+    <div class="tli">
+      <div class="tw">Apr 19–30</div>
+      <div class="tt">Full nuScenes training — Runs 1, 2, 3 (sequential overnight jobs)</div>
+      <div class="tb2">Run 1 overnight (~18h). Run 2 next night (~15h). Run 3 next night (~16h). Each builds on previous checkpoint. While jobs run: prep slides, analysis scripts, eval pipeline.</div>
+    </div>
+    <div class="tli ms">
+      <div class="tw">May 2</div>
+      <div class="ms-box">
+        <div class="ms-t">Mid-term evaluation</div>
+        <div class="ms-b">Deliverables: Run 1–3 results (3 ablation rows), mini results for 4a/4b showing camera helps, architecture diagram, OnlineCameraEncoder code. Full nuScenes 4a/4b running in background.</div>
+      </div>
+    </div>
+    <div class="tli">
+      <div class="tw">May 3–16 · Weeks 5–6</div>
+      <div class="tt">Full nuScenes Runs 4a and 4b — primary results</div>
+      <div class="tb2">Run 4a (EVA-CLIP, ~106h). While running: write analysis scripts, per-class PQ breakdown code, visualisation. Run 4b (CLIP, ~97h) immediately after 4a or in parallel if a second GPU slot is available. Both checkpoint → eval on val split.</div>
+    </div>
+    <div class="tli">
+      <div class="tw">May 17–Jun 6 · Weeks 7–9</div>
+      <div class="tt">Analysis + Phase B planning</div>
+      <div class="tb2">Per-class PQ: EVA-CLIP vs CLIP breakdown. Camera helps most: bicycle, pedestrian, traffic_cone. Camera helps least: terrain, vegetation. Failure analysis: night, rain. Zero-shot prompt experiments. Phase B backbone re-distillation with EVA-CLIP (separate plan doc).</div>
+    </div>
+    <div class="tli">
+      <div class="tw">Jun 7–20 · Weeks 10–11</div>
+      <div class="tt">Thesis writing + final polish</div>
+      <div class="tb2">Full 6-row ablation table. Per-class figures. Qualitative side-by-side. Related work: SAL, OpenScene, IAL, MaskPLS. Method section. Limitations: online inference ~45% training overhead, camera required for best PQ.</div>
+    </div>
+    <div class="tli ms">
+      <div class="tw">Jun 20</div>
+      <div class="ms-box ok">
+        <div class="ms-t">Final evaluation</div>
+        <div class="ms-b">6-row ablation table · EVA-CLIP vs CLIP delta · per-class breakdown · zero-shot demos · thesis draft</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Risk register — camera-specific</h2>
+  <div class="g2">
+    <div>
+      <div class="risk bad"><div class="rt">EVA-CLIP pretrained weight download fails</div><div class="rb">Some open_clip pretrained weights are hosted on Hugging Face which HPC clusters may block. Test: <code>python -c "import open_clip; open_clip.create_model_and_transforms('EVA02-L-14', pretrained='merged2b_s4b_b131k')"</code> on login node before job submission. If blocked: manually download to <code>~/.cache/huggingface/</code> from a node with internet access.</div></div>
+      <div class="risk bad"><div class="rt">Camera cross-attn OOM with batch=2</div><div class="rb">EVA-CLIP: 3456 K,V tokens × 8 heads × 6 decoder layers ≈ large attention matrices. If VRAM &gt; 96GB: reduce to batch=1 + gradient accumulation steps=4. Or reduce EVA-CLIP input from 336px to 224px (256 tokens/cam → same as CLIP fallback).</div></div>
+    </div>
+    <div>
+      <div class="risk w"><div class="rt">Online camera encoding blocks training throughput</div><div class="rb">EVA-CLIP adds ~480ms/step. Over 30 epochs this is ~68 extra A100 hours vs cached. If timeline is tight after mid-term: temporarily switch to CLIP ViT-L (360ms, 97h total) to get results faster, then run EVA-CLIP as final experiment.</div></div>
+      <div class="risk w"><div class="rt">cam_proj layer slow to learn EVA-CLIP→decoder mapping</div><div class="rb">cam_proj is initialized randomly. For first 5 epochs, camera cross-attention may add noise rather than signal. Use higher LR for cam layers (1e-3 vs 1e-4 for rest). Monitor: camera-on PQ should exceed camera-off PQ (from dropout) by epoch 10. If not by epoch 15: reduce cam dropout to 0.1 so model sees camera more often.</div></div>
+    </div>
+  </div>
+</div></div>
+
+<script>
+function go(name,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('on'));
+  document.getElementById('page-'+name).classList.add('on');
+  if(btn) btn.classList.add('on');
+}
+function sw(el,id){
+  const wrap=el.closest('.wrap');
+  wrap.querySelectorAll('.stab').forEach(t=>t.classList.remove('on'));
+  wrap.querySelectorAll('.sp').forEach(p=>p.classList.remove('on'));
+  el.classList.add('on');
+  document.getElementById(id).classList.add('on');
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  document.querySelectorAll('.cw').forEach(cw=>{
+    const btn=cw.querySelector('.cbtn');
+    if(!btn) return;
+    btn.addEventListener('click',()=>{
+      const pre=cw.querySelector('pre');
+      if(!pre) return;
+      navigator.clipboard.writeText(pre.innerText).then(()=>{
+        btn.textContent='copied!';
+        setTimeout(()=>btn.textContent='copy',1800);
+      });
+    });
+  });
+});
+</script>
+</body></html>
