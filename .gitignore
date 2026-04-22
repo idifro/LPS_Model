@@ -13,7 +13,9 @@ __pycache__/
 *.jpg
 *.png
 *.zip
-
+wandb/
+third_party/
+panoptic/viz/
 # Distribution / packaging
 .Python
 build/

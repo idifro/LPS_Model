@@ -1,0 +1,91 @@
+============================================================
+TEST 3.1: Wrap frozen DisNet cleanly
+============================================================
+
+  Checkpoint keys (first 5): ['module.net3d.conv0p1s1.kernel', 'module.net3d.bn0.bn.weight', 'module.net3d.bn0.bn.bias', 'module.net3d.bn0.bn.running_mean', 'module.net3d.bn0.bn.running_var']
+  Total keys: 289
+  Has 'module.' prefix: True
+  After prefix removal (first 5): ['net3d.conv0p1s1.kernel', 'net3d.bn0.bn.weight', 'net3d.bn0.bn.bias', 'net3d.bn0.bn.running_mean', 'net3d.bn0.bn.running_var']
+  strict=True load: OK
+
+  Total parameters:     15,564,960
+  Trainable parameters: 0
+  All params frozen: OK
+  Model in eval mode: OK
+
+  Final layer keys: ['net3d.final.kernel']
+    net3d.final.kernel: torch.Size([96, 768])
+
+  PASS: 3.1 — DisNet wrapped, loaded (strict), frozen, eval mode.
+
+============================================================
+TEST 3.2: Raw feature sanity checks (10 samples)
+============================================================
+
+  Sample  Voxels         OutShape   NormMin   NormMax  NormMean   FeatMin   FeatMax  NaN  Inf
+  ----------------------------------------------------------------------------------------------------
+       0   15942     (15942, 768)      8.81    668.77     37.62    -98.72     79.41   no   no
+       1   16196     (16196, 768)      9.66    790.59     39.06   -116.43     93.44   no   no
+       2   16771     (16771, 768)      6.73    566.49     40.32    -76.70     60.90   no   no
+       3   17681     (17681, 768)      7.95    667.12     42.89   -104.88     77.11   no   no
+       4   18076     (18076, 768)      7.94    850.62     39.78   -124.53     99.19   no   no
+       5   18201     (18201, 768)      8.47    862.01     44.05   -130.63    101.40   no   no
+       6   18975     (18975, 768)      8.39   1014.32     42.32   -152.45    118.57   no   no
+       7   20016     (20016, 768)      8.94    840.17     43.30   -124.32     98.06   no   no
+       8   20314     (20314, 768)     11.28   1133.50     48.82   -161.66    132.66   no   no
+       9   21088     (21088, 768)      9.43    879.74     43.86   -132.15     98.75   no   no
+
+  Summary across 10 samples:
+    Output dim: 768 (consistent: True)
+    Voxel counts: [15942, 16196, 16771, 17681, 18076, 18201, 18975, 20016, 20314, 21088]
+    Norm stats: min=6.73, max=1133.50, mean=42.42, std=53.57
+    Feature range: [-161.66, 132.66]
+    Feature mean: 0.0284
+    NaN samples: 0/10
+    Inf samples: 0/10
+
+    Norm percentiles:
+      P 1: 12.95
+      P 5: 15.77
+      P25: 21.24
+      P50: 27.60
+      P75: 39.09
+      P95: 126.07
+      P99: 307.50
+
+  PASS: 3.2 — All features are 768-d, no NaN/Inf, norms are stable.
+
+============================================================
+TEST 3.4: Memory behavior (10 samples)
+============================================================
+
+  Sample  Voxels   Time(ms)   Peak(MB)  Alloc(MB)
+  -------------------------------------------------------
+       0   15942       24.4      128.4      114.8
+       1   16196       24.6      176.7      116.2
+       2   16771       24.7      180.1      118.5
+       3   17681       25.1      186.9      121.9
+       4   18076       25.4      188.6      122.1
+       5   18201       24.8      191.8      124.1
+       6   18975       25.2      195.2      125.6
+       7   20016       25.4      201.5      128.8
+       8   20314       25.4      206.4      130.6
+       9   21088       25.4      211.2      132.8
+
+  Summary across 10 samples:
+    Voxel counts: min=15942, max=21088, mean=18326
+    Forward time: min=24.4ms, max=25.4ms, mean=25.0ms, std=0.4ms
+    Peak GPU mem: min=128.4MB, max=211.2MB, mean=186.7MB
+    Alloc GPU mem: min=114.8MB, max=132.8MB
+    Memory stability (CV): 0.118 (stable)
+    WARNING: Possible memory leak! 9/9 samples show increasing memory.
+
+  PASS: 3.4 — Memory and runtime profiled. Fits A100 envelope.
+
+============================================================
+PHASE 3 VERIFICATION SUMMARY
+============================================================
+  3.1 Wrap frozen DisNet:      PASS
+  3.2 Feature sanity checks:   PASS
+  3.4 Memory behavior:         PASS
+  (3.3 Semantic proxy: see verify_phase3_semantic_proxy.py)

@@ -300,6 +300,21 @@ Create `docs/panoptic_runtime_constraints.md` containing:
 - per-keyframe forward pass succeeds on one nuScenes sample
 - branch is frozen and documented
 
+## Phase 0 Results (completed April 22, 2025)
+
+All acceptance criteria met.
+
+| Task | Result |
+|---|---|
+| 0.1 Branch created | `feature/panoptic-openscene-phaseA` from commit `55e0f85` |
+| 0.2 Checkpoint inspection | 768-d OpenSeg variant confirmed. 15,575,696 params. State dict uses `net3d.*` prefix. Final layer: `net3d.final.kernel [96, 768]`. Load via `model.load_state_dict(state, strict=True)`. |
+| 0.3 Per-sample forward | Output: `[20688, 768]`. No NaN/Inf. Norm range [10.05, 924.98], mean 45.0. Forward: 37 ms. GPU peak: 207 MB. |
+| 0.4 Runtime constraints | `docs/panoptic_runtime_constraints.md` created with measured values. |
+
+Scripts created:
+- `panoptic/scripts/inspect_openscene_checkpoint.py`
+- `panoptic/scripts/validate_per_sample_forward.py`
+
 ## If Phase 0 fails
 
 Stop all downstream panoptic work until the following is resolved:
@@ -1150,6 +1165,41 @@ Generate final result summary and handoff docs.
 
 ---
 
+# 16B. HPC GPU Execution Protocol
+
+**Claude Code cannot run GPU scripts directly.** All GPU-dependent scripts must be run manually by the user on a GPU node.
+
+## Step-by-step procedure for running any GPU script
+
+```bash
+# 1. Request interactive GPU node
+bsub -Is -q batch_a100 -n 4 -M 8192 -W 12:00 \
+  -gpu "num=1:mode=exclusive_process:mps=no" /bin/bash
+
+# 2. Load modules and activate environment
+module load conda
+conda activate openscene
+module load cuda/11.0.2
+module load cudnn/11.0_v8.0
+
+# 3. Set environment variables
+export PYTHONPATH=/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene
+export OMP_NUM_THREADS=16
+cd /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene
+
+# 4. Run the script
+python <script_path>
+```
+
+## Rules for the agent
+
+- The agent writes scripts and gives the user the exact command to run
+- The agent does NOT attempt to run GPU scripts itself
+- The user runs the command on the GPU node and reports the output back
+- The agent then continues based on the output
+
+---
+
 # 17. Strict Do-Not-Do Rules
 
 The agent must not do the following unless explicitly instructed by a human after explaining the tradeoff.
@@ -1249,24 +1299,24 @@ Only after Gate G should long full-data experiments begin.
 
 ## Priority 0 — must do first
 
-- [ ] freeze repo state
-- [ ] inspect checkpoint output dim
-- [ ] verify per-sample raw DisNet forward
-- [ ] create panoptic dataset
-- [ ] create dataset verification script
+- [x] freeze repo state
+- [x] inspect checkpoint output dim
+- [x] verify per-sample raw DisNet forward
+- [x] create panoptic dataset
+- [x] create dataset verification script
 
 ## Priority 1 — must do next
 
-- [ ] implement baseline panoptic decoder
-- [ ] implement matching and panoptic losses
-- [ ] run mini smoke training
-- [ ] implement basic PQ evaluation
+- [x] implement baseline panoptic decoder
+- [x] implement matching and panoptic losses
+- [x] run mini smoke training
+- [x] implement basic PQ evaluation
 
 ## Priority 2 — core thesis path
 
-- [ ] implement frozen OpenScene backbone wrapper
-- [ ] add adapter
-- [ ] run mini backbone-swap training
+- [x] implement frozen OpenScene backbone wrapper (done as part of Phase 2)
+- [x] add adapter (backbone_proj + mask_feat_proj in PanopticDecoder)
+- [x] run mini backbone-swap training (PQ=0.2280)
 - [ ] implement token head and text prototypes
 - [ ] run mini token training
 
@@ -1361,6 +1411,139 @@ Advance only when the phase acceptance criteria are met.
 - Phase 9 packaging
 
 This timeline is conceptual. Actual HPC scheduling and runtime segmentation may stretch later phases.
+
+---
+
+# 22a. Execution Log
+
+## Phase 0 — COMPLETE (2026-04-22)
+
+| Task | Status | Result |
+|---|---|---|
+| 0.1 Freeze repo | DONE | Branch `feature/panoptic-openscene-phaseA` at `55e0f85b` |
+| 0.2 Inspect checkpoint | DONE | 768-d OpenSeg variant, 15.6M params, `net3d.*` prefix, strict load OK |
+| 0.3 Per-sample forward | DONE | [20688, 768], no NaN, 37ms, 207 MB on A100 |
+| 0.4 Runtime constraints | DONE | `docs/panoptic_runtime_constraints.md` |
+
+## Phase 1 — COMPLETE (2026-04-22)
+
+| Task | Status | Result |
+|---|---|---|
+| 1.1 Sample indexing | DONE | 323 train, 81 val samples from v1.0-mini |
+| 1.2 LiDAR loading | DONE | Single sweep, range-filtered, ~30-34K points/sample |
+| 1.3 Panoptic labels | DONE | Fixed: uses LIDAR_TOP sd token (not sample token). Added general→16-class mapping. |
+| 1.4 Voxelization | DONE | 0.05m, ~15-22K voxels/sample |
+| 1.5 GT masks | DONE | Thing instances + stuff classes. 15-110 masks/sample typical. |
+| 1.6 Camera paths | DONE | All 6 cameras verified per sample |
+| 1.7 Collate | DONE | Batch coords with batch index, variable-length masks |
+| 1.8 Verification | DONE | 10 random samples + collate check — ALL PASSED |
+
+### Key fixes applied
+- Panoptic files keyed by `sample_data` LIDAR_TOP token, not `sample` token
+- Raw `pan // 1000` gives general category (0-31), not 16-class. Added `GENERAL_TO_PANOPTIC_16` mapping table.
+
+### Gate A: PASSED — per-sample panoptic dataset is correct.
+
+## Phase 2 — COMPLETE (2026-04-22)
+
+| Task | Status | Result |
+|---|---|---|
+| 2.1 Implementation strategy | DONE | Option B: reimplemented minimal decoder/loss stack adapted from MaskPLS. Reference code in `third_party/MaskPLS/`. |
+| 2.2 Panoptic decoder | DONE | `panoptic/models/mask_decoder.py` — 106 queries (100 thing + 6 stuff), 9 layers (3 blocks × 3 virtual levels), hidden_dim=256, 8 heads, masked cross-attention. PyTorch 1.7.1 compatible (manual transpose, no batch_first). ~10M trainable params. |
+| 2.3 Matching and loss | DONE | `panoptic/losses/matcher.py` — Hungarian matching (scipy LSA) with class + BCE + dice costs. `panoptic/losses/panoptic_loss.py` — CE (with eos_coef=0.1) + sigmoid BCE + Dice. Auxiliary losses on all 9 intermediate layers. Loss weights: CE=2.0, BCE=5.0, Dice=5.0. |
+| 2.4 Mini smoke training | DONE | `panoptic/train/train_panoptic.py` — Full-featured training loop with YAML config, WandB, AMP, cosine warmup scheduler, gradient accumulation (4), grad clipping (0.5), checkpoint resume, SIGTERM handler, GPU monitoring. |
+| 2.5 PQ evaluation | DONE | `panoptic/eval/eval_pq.py` — PQ/SQ/RQ per-class + mIoU. Greedy panoptic inference in train script. |
+
+### Training results on nuScenes mini (v1.0-mini, 323 train / 81 val)
+
+| Metric | Best Val | Final Epoch |
+|---|---|---|
+| **PQ** | **0.2280** | 0.1910 |
+| **SQ** | **0.3967** | 0.3654 |
+| **RQ** | **0.3074** | 0.2494 |
+| **mIoU** | **0.2824** | 0.2569 |
+| Train loss | — | 37.05 |
+| GPU peak | — | 2,778 MB |
+| Time/epoch | — | ~51s |
+
+### Per-class PQ breakdown (best checkpoint)
+
+| Class | PQ | SQ | RQ | IoU |
+|---|---|---|---|---|
+| barrier | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| bicycle | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| bus | 0.3146 | 0.5663 | 0.5556 | 0.4109 |
+| car | 0.2152 | 0.6710 | 0.3208 | 0.5320 |
+| construction_vehicle | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| motorcycle | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| pedestrian | 0.4051 | 0.7549 | 0.5366 | 0.3081 |
+| traffic_cone | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| trailer | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| truck | 0.4579 | 0.9031 | 0.5070 | 0.5198 |
+| driveable_surface | 0.8029 | 0.8029 | 1.0000 | 0.8018 |
+| other_flat | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| sidewalk | 0.0979 | 0.5668 | 0.1727 | 0.2859 |
+| terrain | 0.0893 | 0.5538 | 0.1613 | 0.1721 |
+| manmade | 0.5446 | 0.7908 | 0.6887 | 0.7202 |
+| vegetation | 0.7202 | 0.7384 | 0.9753 | 0.7670 |
+
+### Acceptance criteria verification
+
+- [x] Training runs for at least 1-2 epochs on mini without crash — **ran 25+ epochs**
+- [x] Loss decreases across the smoke run — **~44 → ~37 over 25 epochs**
+- [x] Matcher produces non-empty matches in most frames — **100% (20/20 frames, mean 41 matches/frame)**
+- [x] Evaluation script runs to completion — **PASS (81 frames evaluated)**
+- [x] At least some non-trivial PQ is observed — **PQ=0.2280 with strong per-class signal**
+
+### Key observations
+
+- Strong classes: driveable_surface (PQ=0.80), vegetation (PQ=0.72), manmade (PQ=0.54), truck (PQ=0.46), pedestrian (PQ=0.41)
+- Weak/zero classes: barrier, bicycle, motorcycle, traffic_cone, trailer, other_flat — rare or absent in mini
+- SQ is high where RQ>0 (0.55-0.90), meaning mask quality is good when objects are detected
+- Dice loss oscillates (2.4-3.6) — expected on 323 samples with stochastic matching
+
+### Files created in Phase 2
+
+- `panoptic/models/blocks.py` — SelfAttentionLayer, CrossAttentionLayer, FFNLayer, MLP
+- `panoptic/models/positional_encoder.py` — 3D sinusoidal PE (42 bands, normalized for nuScenes)
+- `panoptic/models/mask_decoder.py` — PanopticDecoder (106 queries, 9 layers)
+- `panoptic/losses/matcher.py` — HungarianMatcher (scipy LSA)
+- `panoptic/losses/panoptic_loss.py` — PanopticLoss (CE + BCE + Dice)
+- `panoptic/eval/eval_pq.py` — PanopticEval (PQ/SQ/RQ + mIoU)
+- `panoptic/train/train_panoptic.py` — Full training loop
+- `panoptic/configs/default.yaml` — YAML config (all hyperparams)
+- `panoptic/scripts/verify_matcher_and_eval.py` — Explicit acceptance gate verification
+- `docs/model_design/model_arch_v1.md` — Complete architecture documentation
+
+### Design decisions documented
+
+- Decoder: Pure MaskPLS style (Mask2Former cross-attn + self-attn + FFN)
+- Queries: 100 thing (learnable) + 6 stuff (fixed per class) = 106 total
+- Loss: CE (not focal — focal suppressed gradients too aggressively)
+- Scheduler: Cosine warmup (2 epoch warmup → cosine decay to 1e-6)
+- Point sampling: randperm (without replacement) for both matcher and loss
+
+### Gate B: PASSED — panoptic decoder trains on mini with PQ=0.2280.
+
+### Note on Phase 3
+
+Phase 3 (validate DisNet on per-keyframe input) was already completed as part of Phase 0 and Phase 2. The frozen DisNet backbone is already integrated into the training pipeline — it IS the backbone used for Phase 2 training. Phase 0.3 validated per-sample forward pass, and Phase 2 trained with it for 25+ epochs successfully. All Phase 3 acceptance criteria are met:
+- Pretrained DisNet loads successfully — **confirmed**
+- Forward pass on per-sample voxels works reliably — **25+ epochs, 323 samples/epoch**
+- Output dimension confirmed in actual execution — **768-d**
+- Features numerically stable — **no NaN/Inf across entire training**
+- Memory behavior: 2,778 MB peak, ~51s/epoch, stable
+
+### Gate C: PASSED — frozen DisNet works on per-sample panoptic input.
+
+### Note on Phase 4
+
+Phase 4 (swap in frozen OpenScene backbone) was completed implicitly during Phase 2 implementation. The adapter layer (`backbone_proj: Linear(768→256) + LayerNorm`) and separate mask feature projection (`mask_feat_proj: Linear(768→256) + LayerNorm`) are already part of PanopticDecoder. Training confirmed:
+- Adapter is trainable, backbone is frozen — **confirmed (no gradient flows to DisNet)**
+- Adapted features produce valid decoder outputs — **PQ=0.2280**
+- Memory fits single A100 — **2,778 MB peak out of 96 GB**
+
+### Gate D: PASSED — OpenScene backbone swap is stable on mini.
 
 ---
 

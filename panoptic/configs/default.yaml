@@ -1,0 +1,95 @@
+# ─── Panoptic Decoder Training Config ────────────────────────────────────────
+# All hyperparams in one place. Override via CLI: --config path/to/other.yaml
+
+# ── Data ──
+data:
+  dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini
+  version: v1.0-mini
+  voxel_size: 0.05
+  point_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+
+# ── Augmentation (training only) ──
+augmentation:
+  enabled: true
+  random_rotate_z: true          # full 360° around Z
+  random_flip_x: true            # 50% chance
+  random_flip_y: true            # 50% chance
+  random_scale_min: 0.95
+  random_scale_max: 1.05
+  random_translate_std: 0.1      # Gaussian std in meters
+
+# ── Model ──
+model:
+  backbone_ckpt: models/nuscenes_openseg.pth.tar
+  backbone_dim: 768
+  hidden_dim: 256
+  num_classes: 16
+  num_thing_queries: 100
+  num_stuff_classes: 6
+  nheads: 8
+  dim_feedforward: 1024
+  num_blocks: 3
+  num_levels: 3
+  dropout: 0.0
+
+# ── Loss ──
+loss:
+  focal_gamma: 4.0
+  focal_alpha: 0.25
+  eos_coef: 0.1
+  weight_ce: 2.0
+  weight_mask: 5.0
+  weight_dice: 5.0
+  cost_class: 2.0
+  cost_mask: 5.0
+  cost_dice: 5.0
+  num_points: 50000
+  num_mask_pts: 500
+  p_ratio: 0.75
+
+# ── Training ──
+training:
+  epochs: 100
+  lr: 1.0e-4
+  weight_decay: 0.01
+  grad_clip: 0.5
+  grad_accum: 4
+  batch_size: 1
+  num_workers: 0
+  seed: 42
+
+  # Scheduler: "cosine_warmup" or "cosine_annealing" or "step"
+  scheduler: cosine_warmup
+  # cosine_warmup params
+  warmup_epochs: 2
+  min_lr: 1.0e-6
+  # cosine_annealing params (if scheduler=cosine_annealing)
+  cosine_T_max: 100
+  cosine_eta_min: 1.0e-6
+  # step params (if scheduler=step)
+  step_size: 80
+  step_gamma: 0.1
+
+  # Mixed precision
+  mixed_precision: true
+
+# ── Logging ──
+logging:
+  log_every: 10              # steps
+  eval_every: 5              # epochs
+  wandb_project: openscene-panoptic
+  wandb_entity: null          # null = personal account default
+  wandb_enabled: true
+  wandb_run_name: null        # null = auto-generated
+
+# ── Checkpointing ──
+checkpoint:
+  save_dir: panoptic/checkpoints
+  save_every: 5              # epochs
+  resume: null               # path or null for auto-detect
+  auto_resume: true          # auto-find latest.pth in save_dir
+
+# ── Inference ──
+inference:
+  overlap_thr: 0.8
+  min_points: 50
