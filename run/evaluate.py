@@ -1,9 +1,14 @@
 import os
 import random
+import time
 import numpy as np
 import logging
 import argparse
 import urllib
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.gridspec as gridspec
+from PIL import Image as PILImage
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -94,11 +99,112 @@ def precompute_text_related_properties(labelset_name):
     if hasattr(args, 'map_nuscenes_details'):
         labelset = list(NUSCENES_LABELS_DETAILS)
         mapper = torch.tensor(MAPPING_NUSCENES_DETAILS, dtype=int)
+        # Append mapping for 'unlabeled' index (used by mark_no_feature_to_unknown)
+        # Maps to class 16 (one past the last valid 0-15 class)
+        mapper = torch.cat([mapper, torch.tensor([len(NUSCENES_LABELS_16)], dtype=int)])
 
     text_features = extract_text_feature(labelset, args)
     # labelset.append('unknown')
     labelset.append('unlabeled')
     return text_features, labelset, mapper, palette
+
+
+def visualize_camera_projections(pcl, point_colors, scene_name, data_root_2d,
+                                   split, save_folder, suffix, title):
+    """
+    Project labeled 3D points onto 6 camera images and save a 2x3 mosaic PNG.
+
+    Physical ring layout:
+        Row 0: front_left | front | front_right
+        Row 1: back_left  | back  | back_right
+
+    Args:
+        pcl          : (N,3) float array - world-frame 3D coordinates
+        point_colors : (N,3) uint8 array - RGB label colours
+        scene_name   : str, e.g. 'scene-0061'
+        data_root_2d : str, e.g. 'data/nuscenes_2d'
+        split        : str, 'train' or 'val'
+        save_folder  : str, output directory
+        suffix       : str, 'gt' / 'fusion' / 'distill' / 'ensemble'
+        title        : str, figure subtitle
+    """
+    import matplotlib.pyplot as plt
+
+    cam_layout = [
+        ['front_left', 'front',  'front_right'],
+        ['back_left',  'back',   'back_right'],
+    ]
+
+    scene_2d_dir = os.path.join(data_root_2d, split, scene_name)
+    if not os.path.isdir(scene_2d_dir):
+        return
+
+    # Ensure plain numpy float32
+    if hasattr(pcl, 'numpy'):
+        pcl = pcl.numpy()
+    pcl = np.asarray(pcl, dtype=np.float32)
+    point_colors = np.asarray(point_colors, dtype=np.float32)
+
+    pts_hom = np.concatenate(
+        [pcl, np.ones((len(pcl), 1), dtype=np.float32)], axis=1
+    ).T  # (4, N)
+
+    fig, axes = plt.subplots(2, 3, figsize=(21, 9))
+    fig.suptitle(f'{scene_name}  -  {title}', fontsize=13, fontweight='bold')
+
+    for row_idx, cam_row in enumerate(cam_layout):
+        for col_idx, cam in enumerate(cam_row):
+            ax = axes[row_idx][col_idx]
+
+            img_path = os.path.join(scene_2d_dir, 'color', f'{cam}.jpg')
+            k_path   = os.path.join(scene_2d_dir, 'K',     f'{cam}.npy')
+            p_path   = os.path.join(scene_2d_dir, 'pose',  f'{cam}.npy')
+
+            if not all(os.path.exists(p) for p in [img_path, k_path, p_path]):
+                ax.text(0.5, 0.5, f'{cam}\n(missing)', ha='center', va='center',
+                        transform=ax.transAxes, fontsize=9)
+                ax.axis('off')
+                continue
+
+            img  = plt.imread(img_path)
+            K    = np.load(k_path).astype(np.float64)
+            c2w  = np.load(p_path).astype(np.float64)
+            H, W = img.shape[:2]
+
+            # World -> camera frame (pose is cam-to-world, invert to get world-to-cam)
+            w2c     = np.linalg.inv(c2w)                        # (4,4)
+            pts_cam = (w2c @ pts_hom.astype(np.float64))[:3]    # (3,N)
+
+            in_front = pts_cam[2] > 0.1
+            pts_f    = pts_cam[:, in_front]
+            col_f    = point_colors[in_front]
+
+            if pts_f.shape[1] == 0:
+                ax.imshow(img)
+                ax.set_title(cam, fontsize=9)
+                ax.axis('off')
+                continue
+
+            # Project to pixel coordinates
+            pts_px = K @ pts_f        # (3,N)
+            u = pts_px[0] / pts_px[2]
+            v = pts_px[1] / pts_px[2]
+
+            in_img = (u >= 0) & (u < W) & (v >= 0) & (v < H)
+            u_px   = u[in_img].astype(int)
+            v_px   = v[in_img].astype(int)
+            colors = col_f[in_img] / 255.0
+
+            ax.imshow(img)
+            ax.scatter(u_px, v_px, c=colors, s=1, alpha=0.6, linewidths=0)
+            ax.set_title(cam, fontsize=9)
+            ax.axis('off')
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    out_path = os.path.join(save_folder, f'{scene_name}_cameras_{suffix}.png')
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
 
 def main():
     '''Main function.'''
@@ -221,6 +327,102 @@ def main_worker(gpu, ngpus_per_node, argss):
 
     evaluate(model, val_loader, labelset_name)
 
+def plot_camera_views(pcl, colors, scene_name, split, data_root_3d, save_path, labelset, palette, present_labels):
+    """Project 3D labeled points onto 6 nuScenes cameras and save TWO plots:
+      {stem}_front.png  — front_left | front | front_right
+      {stem}_back.png   — back_left  | back  | back_right
+    Each plot is a 1x3 grid of full-size camera images with a legend row at the bottom.
+
+    Args:
+        pcl:            (N, 3) numpy array, world-frame XYZ coordinates
+        colors:         (N, 3) float [0,1] array, per-point RGB label colours
+        scene_name:     e.g. 'scene-0061'
+        split:          'train' or 'val'
+        data_root_3d:   e.g. 'data/nuscenes_3d'  (used to derive 'data/nuscenes_2d')
+        save_path:      base PNG path; '_front.png' / '_back.png' are derived from its stem
+        labelset:       list of class name strings (16 + 'unlabeled')
+        palette:        flat 1D uint8 array [R0,G0,B0, R1,G1,B1, ...] of class colours
+        present_labels: label indices present in this scene (for legend)
+    """
+    img_root  = data_root_3d.replace('nuscenes_3d', 'nuscenes_2d')
+    scene_dir = os.path.join(img_root, split, scene_name)
+    IMG_W, IMG_H = 800, 450
+    stem = os.path.splitext(save_path)[0]
+
+    if hasattr(pcl, 'numpy'):
+        pcl = pcl.numpy()
+    pcl = pcl.astype(np.float64)
+    pts_h = np.hstack([pcl, np.ones((len(pcl), 1), dtype=np.float64)])  # (N, 4)
+
+    # Build legend patches once — shared by both plots
+    patches = []
+    for lbl_idx in sorted(set(present_labels)):
+        lbl_idx = int(lbl_idx)
+        if lbl_idx < len(labelset) and lbl_idx * 3 + 2 < len(palette):
+            color = np.array(palette[lbl_idx*3:(lbl_idx+1)*3], dtype=float) / 255.0
+            patches.append(mpatches.Patch(facecolor=color, label=labelset[lbl_idx]))
+
+    cam_rows = {
+        'front': ['front_left', 'front', 'front_right'],
+        'back':  ['back_left',  'back',  'back_right'],
+    }
+
+    for row_name, cam_list in cam_rows.items():
+        out_path = f'{stem}_{row_name}.png'
+        # 2-row gridspec: images (tall) + legend (short)
+        fig = plt.figure(figsize=(18, 7))
+        gs  = gridspec.GridSpec(2, 3, height_ratios=[5, 1], hspace=0.05, wspace=0.02)
+
+        for col, cam in enumerate(cam_list):
+            ax = fig.add_subplot(gs[0, col])
+
+            img_path  = os.path.join(scene_dir, 'color', cam + '.jpg')
+            K_path    = os.path.join(scene_dir, 'K',     cam + '.npy')
+            pose_path = os.path.join(scene_dir, 'pose',  cam + '.npy')
+
+            if not os.path.exists(img_path):
+                ax.text(0.5, 0.5, f'{cam}\n(missing)', ha='center', va='center',
+                        transform=ax.transAxes, fontsize=9)
+                ax.axis('off')
+                continue
+
+            img = PILImage.open(img_path)
+            K   = np.load(K_path).astype(np.float64)
+            c2w = np.load(pose_path).astype(np.float64)
+
+            w2c     = np.linalg.inv(c2w)
+            cam_pts = (w2c @ pts_h.T).T   # (N, 4)
+            depth   = cam_pts[:, 2]
+
+            ax.imshow(img)
+            in_front = depth > 0.1
+            if in_front.sum() > 0:
+                uv = (K @ cam_pts[in_front, :3].T).T  # (M, 3)
+                u  = uv[:, 0] / uv[:, 2]
+                v  = uv[:, 1] / uv[:, 2]
+                in_bounds = (u >= 0) & (u < IMG_W) & (v >= 0) & (v < IMG_H)
+                if in_bounds.sum() > 0:
+                    c_pts = colors[in_front][in_bounds]  # float [0,1]
+                    ax.scatter(u[in_bounds], v[in_bounds],
+                               c=c_pts, s=0.5, linewidths=0, alpha=0.85)
+
+            ax.set_title(cam.replace('_', ' '), fontsize=11, pad=3)
+            ax.axis('off')
+
+        # Legend row spanning all three columns
+        ax_leg = fig.add_subplot(gs[1, :])
+        ax_leg.axis('off')
+        if patches:
+            ax_leg.legend(handles=patches, loc='center',
+                          ncol=min(len(patches), 9),
+                          fontsize=9, frameon=False, columnspacing=1.0)
+
+        label_str = os.path.basename(out_path).replace('.png', '')
+        fig.suptitle(f'{scene_name}  |  {label_str}', fontsize=12, y=0.99)
+        plt.savefig(out_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+
+
 def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
     '''Evaluate our OpenScene model.'''
 
@@ -281,9 +483,15 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
                 masks = []
 
             for i, (coords, feat, label, feat_3d, mask, inds_reverse) in enumerate(tqdm(val_data_loader)):
+                t_iter_start = time.time()
+                print(f"\n[EVAL] Scene {i}: coords={coords.shape} feat_3d={feat_3d.shape} "
+                      f"label={label.shape} inds_reverse={inds_reverse.shape}")
+
                 sinput = SparseTensor(feat.cuda(non_blocking=True), coords.cuda(non_blocking=True))
                 coords = coords[inds_reverse, :]
                 pcl = coords[:, 1:].cpu().numpy()
+                t_sparse = time.time()
+                print(f"[EVAL] SparseTensor + coord expand: {t_sparse - t_iter_start:.2f}s")
 
                 if feature_type == 'distill':
                     predictions = model(sinput)
@@ -291,13 +499,24 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
                     pred = predictions.half() @ text_features.t()
                     logits_pred = torch.max(pred, 1)[1].cpu()
                 elif feature_type == 'fusion':
+                    t0 = time.time()
                     predictions = feat_3d.cuda(non_blocking=True)[inds_reverse, :]
+                    torch.cuda.synchronize()
+                    t1 = time.time()
+                    print(f"[EVAL] feat_3d to GPU + index: {t1 - t0:.2f}s | predictions={predictions.shape}")
+
                     pred = predictions.half() @ text_features.t()
+                    torch.cuda.synchronize()
+                    t2 = time.time()
+                    print(f"[EVAL] matmul (N,768)@(768,43): {t2 - t1:.2f}s")
+
                     logits_pred = torch.max(pred, 1)[1].detach().cpu()
                     if mark_no_feature_to_unknown:
                     # some points do not have 2D features from 2D feature fusion.
                     # Directly assign 'unknown' label to those points during inference.
                         logits_pred[~mask[inds_reverse]] = len(labelset)-1
+                    t3 = time.time()
+                    print(f"[EVAL] argmax + mask: {t3 - t2:.2f}s | total scene: {t3 - t_iter_start:.2f}s")
 
                 elif feature_type == 'ensemble':
                     feat_fuse = feat_3d.cuda(non_blocking=True)[inds_reverse, :]
@@ -337,8 +556,16 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
                     label = label[label_mask]
                     logits_pred = logits_pred[label_mask]
                     pred = pred[label_mask]
-                    if vis_pred:
+                    if vis_pred or vis_gt:
                         pcl = torch.load(val_data_loader.dataset.data_paths[i])[0][label_mask]
+                    # extract scene/split info once per scene for camera view plots
+                    _pth_path = val_data_loader.dataset.data_paths[i]
+                    _scene_name_str = os.path.basename(_pth_path).replace('.pth', '')
+                    _split_str = os.path.basename(os.path.dirname(_pth_path))
+                    _labelset_16 = list(NUSCENES_LABELS_16)
+                    _labelset_16[4] = 'construct. vehicle'
+                    _labelset_16[10] = 'road'
+                    _labelset_16.append('unlabeled')
 
                 if vis_input:
                     input_color = torch.load(val_data_loader.dataset.data_paths[i])[1]
@@ -348,6 +575,13 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
                     if mapper is not None:
                         pred_label_color = convert_labels_with_palette(mapper[logits_pred].numpy(), palette)
                         export_pointcloud(os.path.join(save_folder, '{}_{}.ply'.format(i, feature_type)), pcl, colors=pred_label_color)
+                        if 'nuscenes' in labelset_name:
+                            plot_camera_views(
+                                pcl, pred_label_color, _scene_name_str,
+                                _split_str, args.data_root,
+                                os.path.join(save_folder, f'{_scene_name_str}_cameras_{feature_type}.png'),
+                                _labelset_16, palette,
+                                list(np.unique(mapper[logits_pred].numpy())))
                     else:
                         pred_label_color = convert_labels_with_palette(logits_pred.numpy(), palette)
                         export_pointcloud(os.path.join(save_folder, '{}_{}.ply'.format(i, feature_type)), pcl, colors=pred_label_color)
@@ -369,11 +603,23 @@ def evaluate(model, val_data_loader, labelset_name='scannet_3d'):
 
                     if 'nuscenes' in labelset_name:
                         all_digits = np.unique(np.concatenate([np.unique(mapper[logits_pred].numpy()), np.unique(label)]))
-                        labelset = list(NUSCENES_LABELS_16)
-                        labelset[4] = 'construct. vehicle'
-                        labelset[10] = 'road'
-                        visualize_labels(list(all_digits), labelset, 
-                            palette, os.path.join(save_folder, '{}_label.jpg'.format(i)), ncol=all_digits.shape[0])
+                        labelset_16 = list(NUSCENES_LABELS_16)
+                        labelset_16[4] = 'construct. vehicle'
+                        labelset_16[10] = 'road'
+                        labelset_16.append('unlabeled')
+                        # Filter to valid indices only
+                        all_digits = all_digits[all_digits < len(labelset_16)]
+                        visualize_labels(list(all_digits), labelset_16,
+                            palette, os.path.join(save_folder, '{}_label.jpg'.format(i)), ncol=max(all_digits.shape[0], 1))
+                        # Camera projection for GT (skip if already generated for this scene)
+                        _gt_cam = os.path.join(save_folder, '{}_cameras_gt.png'.format(_scene_name_str))
+                        if not os.path.exists(_gt_cam.replace('.png', '_front.png')):
+                            plot_camera_views(
+                                pcl, gt_label_color, _scene_name_str,
+                                _split_str, args.data_root,
+                                _gt_cam,
+                                _labelset_16, palette,
+                                list(np.unique(label.cpu().numpy())))
 
                 if eval_iou:
                     if mark_no_feature_to_unknown:

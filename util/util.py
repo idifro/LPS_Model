@@ -4,6 +4,9 @@ from os.path import join
 import glob
 import numpy as np
 
+import matplotlib
+matplotlib.use('Agg')  # headless backend, no X11 needed
+
 import torch
 from torch import nn
 from PIL import Image

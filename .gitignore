@@ -17,6 +17,9 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+exp/
+models/openseg/
+models/nuscenes_openseg.pth.tar
 develop-eggs/
 dist/
 downloads/
