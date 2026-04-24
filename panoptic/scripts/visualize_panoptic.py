@@ -15,6 +15,7 @@ Usage:
 """
 import argparse
 import colorsys
+import gc
 import os
 import sys
 
@@ -421,11 +422,20 @@ def main():
 
             print(f"  {cam_name}: {len(valid_idx)} pts → saved", flush=True)
 
+        print(f"  Sample {vi} done.", flush=True)
+
         summary_lines.append(
             f"sample_{vi:03d}_{scene_name}: token={token[:16]}  V={V}  "
             f"things={n_things}  stuff={n_stuff}  "
             f"pred_classes={sorted(np.unique(sem_pred).tolist())}"
         )
+
+        # Free memory before loading next sample (critical on 5GB RAM)
+        del panoptic_colors, gt_panoptic_colors, gt_inst, semantic_colors, instance_colors
+        del coords_xyz, gt_sem, gt_masks, gt_classes, feats, coords, outputs
+        del pred_logits, pred_masks, sem_pred, inst_pred
+        gc.collect()
+        torch.cuda.empty_cache()
 
     # Summary
     with open(os.path.join(args.save_dir, "summary.txt"), "w") as f:

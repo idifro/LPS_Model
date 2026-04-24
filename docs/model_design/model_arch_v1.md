@@ -1,7 +1,7 @@
 # Model Architecture v1 - Panoptic 3D Segmentation on nuScenes
 
-**Version:** v1.1 (updated for full nuScenes training)
-**Date:** 2026-04-23
+**Version:** v1.2 (updated with actual results + Phase 4.5 experiments)
+**Date:** 2026-04-24
 **Files covered:** All files under `panoptic/`
 
 ---
@@ -1008,33 +1008,89 @@ Adam+L2 for transformer architectures.
   └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 10.7 Expected Results (Based on Mini + Literature)
+### 10.7 Actual Results — Full nuScenes (Epoch 23, best checkpoint)
 
 ```
-  ┌────────────────────────────────────────────────────────────────────────┐
-  │  Mini Results (323 train, 25 epochs):                                  │
-  │    PQ = 0.228,  SQ = 0.663,  RQ = 0.288,  mIoU = 0.317              │
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  Checkpoint: panoptic/checkpoints_full/best.pth (epoch=23)             │
+  │  Evaluated on: v1.0-trainval val (6019 samples), time: 615.2s         │
   │                                                                        │
-  │  Full nuScenes Expectations:                                           │
-  │    The 87× data increase should significantly improve PQ.              │
-  │    Conservative targets for 30 epochs:                                 │
-  │      PQ:   0.35 - 0.45  (vs 0.228 on mini)                           │
-  │      SQ:   0.70 - 0.80  (mask quality improves with more instances)   │
-  │      RQ:   0.45 - 0.55  (detection improves with rare class exposure) │
-  │      mIoU: 0.50 - 0.65  (semantic accuracy benefits most from data)   │
+  │  ┌────────────────────────────────────────────────────────────────────┐│
+  │  │  AGGREGATE METRICS                                                 ││
+  │  │                                                                    ││
+  │  │  PQ   = 0.4732      (vs predicted 0.35-0.45 → exceeded)           ││
+  │  │  SQ   = 0.7925      (vs predicted 0.70-0.80 → in range)          ││
+  │  │  RQ   = 0.5803      (vs predicted 0.45-0.55 → exceeded)          ││
+  │  │  mIoU = 0.4327      (vs predicted 0.50-0.65 → below, frozen lim) ││
+  │  │                                                                    ││
+  │  │  vs MaskPLS reference (PQ=0.53):  89% of MaskPLS PQ              ││
+  │  │  vs mini baseline (PQ=0.228):     2.08× improvement               ││
+  │  └────────────────────────────────────────────────────────────────────┘│
   │                                                                        │
-  │  Reference: MaskPLS (Mask2Former on full nuScenes LiDAR):             │
-  │      PQ = 0.53,  SQ = 0.80,  RQ = 0.64,  mIoU = 0.71                │
-  │    Our model uses frozen OpenScene backbone (not jointly trained),      │
-  │    so expect ~60-80% of MaskPLS numbers as realistic ceiling.          │
+  │  ┌────────────────────────────────────────────────────────────────────┐│
+  │  │  PER-CLASS RESULTS (Thing classes 0-9)                             ││
+  │  │                                                                    ││
+  │  │  Class                    PQ     SQ     RQ     IoU                ││
+  │  │  barrier (T)            0.227  0.707  0.321  0.060                ││
+  │  │  bicycle (T)            0.294  0.804  0.366  0.024                ││
+  │  │  bus (T)                0.457  0.892  0.512  0.665                ││
+  │  │  car (T)                0.845  0.904  0.935  0.774  ★ best       ││
+  │  │  construction_vehicle   0.314  0.872  0.361  0.226                ││
+  │  │  motorcycle (T)         0.678  0.917  0.739  0.499                ││
+  │  │  pedestrian (T)         0.721  0.839  0.860  0.384                ││
+  │  │  traffic_cone (T)       0.546  0.791  0.691  0.179                ││
+  │  │  trailer (T)            0.268  0.795  0.336  0.253                ││
+  │  │  truck (T)              0.484  0.871  0.555  0.591                ││
+  │  │  MEAN (thing)           0.483  0.839  0.568  0.365                ││
+  │  └────────────────────────────────────────────────────────────────────┘│
   │                                                                        │
-  │  Key improvements from mini → full:                                    │
-  │    1. Rare class coverage: bicycle, motorcycle, construction_vehicle   │
-  │       had 0 PQ on mini — full dataset has many more instances          │
-  │    2. Object diversity: more pose/size/occlusion variation             │
-  │    3. Scene diversity: different lighting, weather, locations          │
-  │    4. Stuff boundary quality: more examples refine edges              │
-  └────────────────────────────────────────────────────────────────────────┘
+  │  ┌────────────────────────────────────────────────────────────────────┐│
+  │  │  PER-CLASS RESULTS (Stuff classes 10-15)                           ││
+  │  │                                                                    ││
+  │  │  Class                    PQ     SQ     RQ     IoU                ││
+  │  │  driveable_surface      0.854  0.855  1.000  0.860  ★ best stuff ││
+  │  │  other_flat             0.082  0.632  0.129  0.133                ││
+  │  │  sidewalk               0.206  0.638  0.322  0.315                ││
+  │  │  terrain                0.249  0.641  0.389  0.454                ││
+  │  │  manmade                0.671  0.766  0.876  0.767                ││
+  │  │  vegetation             0.677  0.758  0.894  0.740                ││
+  │  │  MEAN (stuff)           0.457  0.715  0.602  0.545                ││
+  │  └────────────────────────────────────────────────────────────────────┘│
+  └─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 10.7b Actual Results — Mini Evaluation (best.pth on v1.0-mini val)
+
+```
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  Evaluated on: v1.0-mini val (81 samples)                              │
+  │  Note: uses the FULL-trained checkpoint, evaluated on mini val split   │
+  │                                                                        │
+  │  PQ   = 0.3551      SQ   = 0.5373     RQ   = 0.4335     mIoU = 0.3231│
+  │                                                                        │
+  │  Strong:  car (PQ=0.82), pedestrian (PQ=0.73), vegetation (PQ=0.79)   │
+  │           driveable_surface (PQ=0.85), truck (PQ=0.66)                │
+  │  Zero:   barrier, construction_vehicle, traffic_cone, trailer,         │
+  │           other_flat — these classes have few/no instances in mini val │
+  │                                                                        │
+  │  Lower than full-val PQ (0.35 vs 0.47) because mini val has only      │
+  │  81 samples from 2 scenes — zero-PQ classes drag down the mean.       │
+  └─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 10.7c Analysis: Full Training Observations
+
+```
+  Key findings:
+  1. Training converged at epoch ~13 (based on best_pq checkpoint), continued
+     till epoch 23 with marginal improvement → cosine decay approaching min_lr
+  2. Car is near-perfect (PQ=0.845, RQ=0.935) — dominant class, well-represented
+  3. SQ is universally high (0.63-0.92 where detected) — mask quality is strong
+  4. mIoU at 0.43 is below expectation (predicted 0.50-0.65) — frozen backbone
+     limitation: CLIP-distilled features are not optimized for per-voxel semantics
+  5. Rare classes (barrier, bicycle, trailer) have low RQ — detection bottleneck
+  6. Best stuff class: driveable_surface (PQ=0.854, RQ=1.0) — trivially large
+  7. Worst stuff class: other_flat (PQ=0.082) — ambiguous, small, rare
 ```
 
 ### 10.8 Mini vs Full Comparison Table
@@ -1161,7 +1217,8 @@ Adam+L2 for transformer architectures.
 panoptic/
 ├── configs/
 │   ├── default.yaml              ← Mini config (v1.0-mini, 323 samples)
-│   └── full_nuscenes.yaml        ← Full config (v1.0-trainval, ~28K samples)
+│   ├── full_nuscenes.yaml        ← Full config (v1.0-trainval, ~28K samples)
+│   └── full_nuscenes_4gpu.yaml   ← 4-GPU DDP config (lr=2e-4, grad_accum=4)
 │
 ├── dataset/
 │   └── nuscenes_panoptic.py      ← Dataset: loading, voxelization, GT mask construction
@@ -1209,11 +1266,27 @@ panoptic/
 │   └── latest.pth
 │
 ├── scripts/
-│   ├── train_full_job.sh         ← bsub job script for full nuScenes
+│   ├── train_full_job.sh         ← bsub job script for full nuScenes (1 GPU)
+│   ├── train_full_4gpu_job.sh    ← bsub job script for 4-GPU DDP training
+│   ├── evaluate_full.py          ← Per-class PQ/SQ/RQ/mIoU evaluation
+│   ├── visualize_panoptic.py     ← Panoptic viz: per-camera overlays + PLY + BEV
+│   ├── visualize_lidar_camera_overlay.py ← Camera projection + overlay utilities
+│   ├── test_eval_viz.md          ← Commands to run eval/viz scripts
 │   ├── verify_matcher_and_eval.py
 │   ├── verify_phase3_semantic_proxy.py
 │   ├── inspect_openscene_checkpoint.py
 │   └── validate_per_sample_forward.py
+│
+├── eval_results/                 ← Evaluation artifacts
+│   ├── eval_results.txt          ← Per-class results table
+│   ├── eval_results.json         ← Machine-readable metrics
+│   └── confusion_matrix.npy      ← 16×16 confusion matrix
+│
+├── viz_panoptic/                 ← Visualization output
+│   └── sample_NNN_scene-XXXX/
+│       ├── cameras/              ← Per-camera panoptic + GT overlays with legends
+│       ├── pointcloud_*.ply      ← Colored point clouds (semantic/panoptic/GT/instance)
+│       └── bev_comparison.png    ← Bird's-eye-view pred vs GT
 │
 └── logs/                         ← Training stdout/stderr from bsub
 ```

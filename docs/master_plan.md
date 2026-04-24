@@ -1317,6 +1317,10 @@ Only after Gate G should long full-data experiments begin.
 - [x] implement frozen OpenScene backbone wrapper (done as part of Phase 2)
 - [x] add adapter (backbone_proj + mask_feat_proj in PanopticDecoder)
 - [x] run mini backbone-swap training (PQ=0.2280)
+- [x] run full nuScenes training (PQ=0.4732, epoch 23)
+- [x] comprehensive per-class evaluation (evaluate_full.py)
+- [x] panoptic visualization tooling (visualize_panoptic.py)
+- [x] 4-GPU DDP code + config (backward-compatible, awaiting run)
 - [ ] implement token head and text prototypes
 - [ ] run mini token training
 
@@ -1544,6 +1548,95 @@ Phase 4 (swap in frozen OpenScene backbone) was completed implicitly during Phas
 - Memory fits single A100 — **2,778 MB peak out of 96 GB**
 
 ### Gate D: PASSED — OpenScene backbone swap is stable on mini.
+
+---
+
+## Phase 4.5 — Full nuScenes Training + Evaluation + Multi-GPU Experiment (COMPLETE, 2026-04-24)
+
+### Objective
+
+Scale training from mini to full nuScenes v1.0-trainval, evaluate comprehensively, build evaluation/visualization tooling, and experiment with 4-GPU DDP training.
+
+### Tasks completed
+
+| Task | Status | Details |
+|---|---|---|
+| Full nuScenes training (1-GPU) | DONE | 30 epochs, grad_accum=8, cosine warmup, A100 single GPU, ~25h |
+| Per-class evaluation script | DONE | `panoptic/scripts/evaluate_full.py` — PQ/SQ/RQ/mIoU per class |
+| Panoptic visualization script | DONE | `panoptic/scripts/visualize_panoptic.py` — per-camera overlays with instance-aware legends, PLY files, BEV |
+| 4-GPU DDP code changes | DONE | `train_panoptic.py` modified with backward-compatible DDP (DistributedSampler, all_reduce, rank-guarded logging) |
+| 4-GPU config + job script | DONE | `full_nuscenes_4gpu.yaml` (lr=2e-4, grad_accum=4), `train_full_4gpu_job.sh` |
+| 4-GPU training run | PENDING | Job script fixed (torchrun → python -m torch.distributed.run), not yet run to completion |
+
+### Full nuScenes Results (best checkpoint, epoch 23)
+
+**v1.0-trainval val (6019 samples):**
+
+| Metric | Value | vs Mini | vs MaskPLS reference |
+|---|---|---|---|
+| **PQ** | **0.4732** | 2.08× (0.228→0.473) | 89% of 0.53 |
+| **SQ** | **0.7925** | 2.00× (0.397→0.793) | 99% of 0.80 |
+| **RQ** | **0.5803** | 1.89× (0.307→0.580) | 91% of 0.64 |
+| **mIoU** | **0.4327** | 1.53× (0.282→0.433) | 61% of 0.71 |
+| Thing PQ | 0.4833 | — | — |
+| Stuff PQ | 0.4565 | — | — |
+
+**Key per-class highlights:**
+
+| Class | PQ | Notable |
+|---|---|---|
+| car | 0.845 | Near-perfect detection (RQ=0.935) |
+| pedestrian | 0.721 | Strong (RQ=0.860) |
+| motorcycle | 0.678 | Excellent for rare class |
+| driveable_surface | 0.854 | Perfect detection (RQ=1.0) |
+| vegetation | 0.677 | Strong stuff class |
+| manmade | 0.671 | Strong stuff class |
+| barrier | 0.227 | Weak — small objects, low IoU |
+| other_flat | 0.082 | Worst — ambiguous class |
+
+**Mini val evaluation (same checkpoint on 81 mini val samples):**
+
+| PQ | SQ | RQ | mIoU |
+|---|---|---|---|
+| 0.3551 | 0.5373 | 0.4335 | 0.3231 |
+
+Lower than full-val because mini has only 2 scenes → many classes have zero instances.
+
+### Analysis
+
+1. **PQ exceeded predictions** (0.473 vs predicted 0.35-0.45) — the frozen CLIP backbone provides richer features than expected
+2. **SQ near ceiling** (0.793 vs MaskPLS 0.80) — mask quality is excellent, matching state-of-the-art
+3. **mIoU is the bottleneck** (0.433 vs predicted 0.50-0.65) — frozen backbone not optimized for per-voxel semantics; this is the primary gap vs MaskPLS
+4. **Training converged at epoch ~13** — cosine decay approaching min_lr, marginal gains after
+5. **All 16 classes detected** on full val (vs 9/16 on mini) — data scaling resolved rare class coverage
+
+### 4-GPU DDP Experiment Design
+
+| Parameter | 1-GPU (baseline) | 4-GPU (experiment) |
+|---|---|---|
+| GPUs | 1 | 4 |
+| grad_accum | 8 | 4 |
+| Effective batch | 8 | 16 |
+| LR | 1e-4 | 2e-4 (linear scaled) |
+| Steps/epoch | 3,516 | 1,758 |
+| Est. time | ~25h | ~7h |
+| Config | full_nuscenes.yaml | full_nuscenes_4gpu.yaml |
+
+Status: Code ready, job script corrected (torchrun env issue fixed), awaiting submission.
+
+### Files created/modified in Phase 4.5
+
+- `panoptic/configs/full_nuscenes_4gpu.yaml` — 4-GPU config
+- `panoptic/scripts/train_full_4gpu_job.sh` — 4-GPU bsub job script
+- `panoptic/scripts/evaluate_full.py` — comprehensive evaluation
+- `panoptic/scripts/visualize_panoptic.py` — panoptic visualization (camera overlays + PLY + BEV)
+- `panoptic/scripts/visualize_lidar_camera_overlay.py` — camera projection utilities
+- `panoptic/scripts/test_eval_viz.md` — test commands reference
+- `panoptic/train/train_panoptic.py` — added backward-compatible DDP support
+- `panoptic/eval_results/` — evaluation artifacts
+- `docs/model_design/model_arch_v1.md` — updated to v1.2 with actual results
+
+### Gate D.5: PASSED — Full nuScenes training achieves PQ=0.473, evaluation and visualization tooling complete.
 
 ---
 

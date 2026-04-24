@@ -31,6 +31,8 @@ eggs/
 lib64/
 parts/
 sdist/
+panoptic/checkpoints_full/
+panoptic/viz_panoptic/
 var/
 wheels/
 pip-wheel-metadata/
@@ -138,4 +140,5 @@ dmypy.json
 .idea
 out
 3rdParty
-initmodel
+initmodelpanoptic/checkpoints/
+panoptic/checkpoints_full/
