@@ -10,11 +10,13 @@ Features:
 - Seed for reproducibility
 - GPU memory monitoring
 - Config saved in checkpoint
+- Multi-GPU DDP support (backward-compatible with single-GPU)
 
-Usage (on A100 GPU node):
-    python -u panoptic/train/train_panoptic.py
-    python -u panoptic/train/train_panoptic.py --config panoptic/configs/my_ablation.yaml
-    python -u panoptic/train/train_panoptic.py --config panoptic/configs/default.yaml --resume panoptic/checkpoints/latest.pth
+Usage:
+    # Single GPU:
+    python -u panoptic/train/train_panoptic.py --config panoptic/configs/full_nuscenes.yaml
+    # Multi-GPU (4 GPUs, single node):
+    torchrun --standalone --nproc_per_node=4 panoptic/train/train_panoptic.py --config panoptic/configs/full_nuscenes_4gpu.yaml
 """
 import argparse
 import math
@@ -25,7 +27,10 @@ import time
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
 import MinkowskiEngine as ME
 import yaml
 
@@ -96,7 +101,25 @@ def set_seed(seed):
     np.random.seed(seed)
     if hasattr(torch, "use_deterministic_algorithms"):
         pass  # don't force deterministic — ME doesn't support it
-    print(f"[Seed] {seed}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Distributed setup
+# ══════════════════════════════════════════════════════════════════════════════
+
+def setup_distributed():
+    """Auto-detect DDP from torchrun env vars. Backward-compatible with single-GPU."""
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    if world_size > 1:
+        local_rank = int(os.environ["LOCAL_RANK"])
+        rank = int(os.environ["RANK"])
+        dist.init_process_group(backend="nccl")
+        torch.cuda.set_device(local_rank)
+        device = torch.device("cuda", local_rank)
+        return local_rank, rank, world_size, True, device
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return 0, 0, 1, False, device
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -318,7 +341,7 @@ class GracefulKiller:
 def save_checkpoint(path, epoch, decoder, optimizer, scheduler, scaler, best_pq, cfg, metrics=None):
     state = {
         "epoch": epoch,
-        "decoder": decoder.state_dict(),
+        "decoder": decoder.module.state_dict() if hasattr(decoder, "module") else decoder.state_dict(),
         "optimizer": optimizer.state_dict(),
         "scheduler": scheduler.state_dict(),
         "best_pq": best_pq,
@@ -374,22 +397,31 @@ def main():
     args, cli_overrides = parse_args()
     cfg = load_config(args.config, cli_overrides)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
+    # ── Distributed setup (auto-detect from torchrun env) ──
+    local_rank, rank, world_size, is_distributed, device = setup_distributed()
+    is_main = (rank == 0)
 
-    # Seed
-    set_seed(cfg["training"]["seed"])
+    if is_main:
+        print(f"Device: {device}, world_size: {world_size}")
+
+    # Seed (offset by rank for different augmentation per GPU)
+    seed = cfg["training"]["seed"] + rank
+    set_seed(seed)
+    if is_main:
+        print(f"[Seed] {seed} (rank {rank})")
 
     # Signal handler
     killer = GracefulKiller()
 
-    # Directories
+    # Directories (rank 0 only)
     save_dir = cfg["checkpoint"]["save_dir"]
-    os.makedirs(save_dir, exist_ok=True)
+    if is_main:
+        os.makedirs(save_dir, exist_ok=True)
 
-    # WandB
-    wandb_active = init_wandb(cfg)
-    print(f"[WandB] {'Active' if wandb_active else 'Disabled'}")
+    # WandB (rank 0 only)
+    wandb_active = init_wandb(cfg) if is_main else False
+    if is_main:
+        print(f"[WandB] {'Active' if wandb_active else 'Disabled'}")
 
     # ── Data ──
     dcfg = cfg["data"]
@@ -408,15 +440,24 @@ def main():
         augment=False,
     )
     tcfg = cfg["training"]
+
+    # DistributedSampler for training (splits data across GPUs)
+    train_sampler = DistributedSampler(
+        train_ds, num_replicas=world_size, rank=rank, shuffle=True
+    ) if is_distributed else None
+
     train_loader = torch.utils.data.DataLoader(
-        train_ds, batch_size=1, shuffle=True,
+        train_ds, batch_size=1,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
         num_workers=tcfg["num_workers"], collate_fn=lambda x: x[0],
     )
     val_loader = torch.utils.data.DataLoader(
         val_ds, batch_size=1, shuffle=False,
         num_workers=tcfg["num_workers"], collate_fn=lambda x: x[0],
     )
-    print(f"Train: {len(train_ds)} samples, Val: {len(val_ds)} samples")
+    if is_main:
+        print(f"Train: {len(train_ds)} samples ({len(train_loader)} batches/GPU), Val: {len(val_ds)} samples")
 
     # ── Models ──
     backbone = load_backbone(cfg["model"]["backbone_ckpt"], device)
@@ -434,8 +475,9 @@ def main():
         dropout=mcfg["dropout"],
     ).to(device)
 
-    n_params = sum(p.numel() for p in decoder.parameters() if p.requires_grad)
-    print(f"[Decoder] {n_params:,} trainable parameters")
+    if is_main:
+        n_params = sum(p.numel() for p in decoder.parameters() if p.requires_grad)
+        print(f"[Decoder] {n_params:,} trainable parameters")
 
     # ── Loss ──
     lcfg = cfg["loss"]
@@ -455,21 +497,22 @@ def main():
         p_ratio=lcfg["p_ratio"],
     )
 
-    # ── Optimizer ──
+    # ── Optimizer (create before DDP wrap — references same param objects) ──
     optimizer = torch.optim.AdamW(
         decoder.parameters(), lr=tcfg["lr"], weight_decay=tcfg["weight_decay"]
     )
 
     # ── Scheduler ──
-    steps_per_epoch = len(train_loader)
+    steps_per_epoch = len(train_loader) // tcfg["grad_accum"]
     scheduler, sched_step_per = build_scheduler(optimizer, cfg, steps_per_epoch)
 
     # ── Mixed precision ──
     use_amp = tcfg["mixed_precision"] and device.type == "cuda"
     scaler = torch.cuda.amp.GradScaler() if use_amp else None
-    print(f"[AMP] {'Enabled' if use_amp else 'Disabled'}")
+    if is_main:
+        print(f"[AMP] {'Enabled' if use_amp else 'Disabled'}")
 
-    # ── Resume ──
+    # ── Resume (load into unwrapped decoder, before DDP wrap) ──
     start_epoch = 0
     best_pq = 0.0
     global_step = 0
@@ -484,14 +527,23 @@ def main():
         start_epoch = ckpt["epoch"] + 1
         best_pq = ckpt.get("best_pq", 0.0)
         global_step = start_epoch * steps_per_epoch
-        print(f"[Resume] From {resume_path}, epoch {start_epoch}, best_pq={best_pq:.4f}")
+        if is_main:
+            print(f"[Resume] From {resume_path}, epoch {start_epoch}, best_pq={best_pq:.4f}")
+
+    # ── Wrap decoder in DDP (after resume load) ──
+    if is_distributed:
+        decoder = DDP(decoder, device_ids=[local_rank], output_device=local_rank,
+                      find_unused_parameters=False)
+        if is_main:
+            print(f"[DDP] Wrapped decoder, {world_size} GPUs")
 
     # ── Training ──
-    print(f"\n{'='*60}")
-    print(f"Training: epochs {start_epoch}→{tcfg['epochs']-1}, "
-          f"scheduler={tcfg['scheduler']}, lr={tcfg['lr']}, "
-          f"grad_accum={tcfg['grad_accum']}")
-    print(f"{'='*60}\n")
+    if is_main:
+        print(f"\n{'='*60}")
+        print(f"Training: epochs {start_epoch}→{tcfg['epochs']-1}, "
+              f"scheduler={tcfg['scheduler']}, lr={tcfg['lr']}, "
+              f"grad_accum={tcfg['grad_accum']}, world_size={world_size}")
+        print(f"{'='*60}\n")
 
     log_every = cfg["logging"]["log_every"]
     eval_every = cfg["logging"]["eval_every"]
@@ -499,6 +551,10 @@ def main():
 
     decoder.train()
     for epoch in range(start_epoch, tcfg["epochs"]):
+        # Set epoch on sampler for correct shuffling
+        if train_sampler is not None:
+            train_sampler.set_epoch(epoch)
+
         epoch_loss = 0.0
         epoch_steps = 0
         optimizer.zero_grad()
@@ -507,14 +563,17 @@ def main():
         for step, batch in enumerate(train_loader):
             # Check for HPC kill signal
             if killer.kill_now:
-                print("[SIGNAL] Saving interrupted checkpoint...")
-                save_checkpoint(
-                    os.path.join(save_dir, "interrupted.pth"),
-                    epoch, decoder, optimizer, scheduler, scaler, best_pq, cfg,
-                )
-                print(f"[SIGNAL] Saved interrupted.pth at epoch {epoch} step {step}")
-                if wandb_active:
-                    wandb.finish()
+                if is_main:
+                    print("[SIGNAL] Saving interrupted checkpoint...")
+                    save_checkpoint(
+                        os.path.join(save_dir, "interrupted.pth"),
+                        epoch, decoder, optimizer, scheduler, scaler, best_pq, cfg,
+                    )
+                    print(f"[SIGNAL] Saved interrupted.pth at epoch {epoch} step {step}")
+                    if wandb_active:
+                        wandb.finish()
+                if is_distributed:
+                    dist.barrier()
                 sys.exit(0)
 
             feats, coords = extract_backbone_features(backbone, batch, device)
@@ -559,15 +618,15 @@ def main():
                 if sched_step_per == "step":
                     scheduler.step()
 
-            # Logging
-            if (step + 1) % log_every == 0:
+            # Logging (rank 0 only)
+            if is_main and (step + 1) % log_every == 0:
                 avg = epoch_loss / epoch_steps
                 lr_now = optimizer.param_groups[0]["lr"]
                 loss_str = " ".join(
                     f"{k}={v.item():.4f}" for k, v in losses.items()
                     if not k[0].isdigit()
                 )
-                print(f"  [E{epoch} S{step+1}/{steps_per_epoch}] "
+                print(f"  [E{epoch} S{step+1}/{len(train_loader)}] "
                       f"loss={avg:.4f} lr={lr_now:.2e} | {loss_str}")
 
                 log_data = {"train/loss": avg, "train/lr": lr_now}
@@ -591,53 +650,75 @@ def main():
         if sched_step_per == "epoch":
             scheduler.step()
 
-        # Epoch summary
+        # Epoch summary — all-reduce loss across ranks for accurate reporting
         epoch_time = time.time() - t_epoch
-        avg_loss = epoch_loss / max(epoch_steps, 1)
-        lr_now = optimizer.param_groups[0]["lr"]
+        if is_distributed:
+            loss_tensor = torch.tensor([epoch_loss, float(epoch_steps)], device=device, dtype=torch.float64)
+            dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+            epoch_loss = loss_tensor[0].item()
+            epoch_steps_total = int(loss_tensor[1].item())
+        else:
+            epoch_steps_total = epoch_steps
 
-        # GPU memory
-        gpu_mem = 0
-        if device.type == "cuda":
-            gpu_mem = torch.cuda.max_memory_allocated() / 1024**2
-            torch.cuda.reset_peak_memory_stats()
+        if is_main:
+            avg_loss = epoch_loss / max(epoch_steps_total, 1)
+            lr_now = optimizer.param_groups[0]["lr"]
 
-        print(f"Epoch {epoch}: loss={avg_loss:.4f}, lr={lr_now:.2e}, "
-              f"time={epoch_time:.1f}s, gpu_peak={gpu_mem:.0f}MB")
-        log_wandb({
-            "epoch/loss": avg_loss, "epoch/lr": lr_now,
-            "epoch/time_s": epoch_time, "epoch/gpu_peak_mb": gpu_mem,
-        }, step=global_step)
+            gpu_mem = 0
+            if device.type == "cuda":
+                gpu_mem = torch.cuda.max_memory_allocated() / 1024**2
+                torch.cuda.reset_peak_memory_stats()
 
-        # ── Eval ──
-        if (epoch + 1) % eval_every == 0 or epoch == tcfg["epochs"] - 1:
-            print("  Evaluating...")
-            metrics = evaluate(decoder, backbone, val_loader, device, cfg)
-            print(f"  PQ={metrics['PQ']:.4f} SQ={metrics['SQ']:.4f} "
-                  f"RQ={metrics['RQ']:.4f} mIoU={metrics['mIoU']:.4f}")
+            print(f"Epoch {epoch}: loss={avg_loss:.4f}, lr={lr_now:.2e}, "
+                  f"time={epoch_time:.1f}s, gpu_peak={gpu_mem:.0f}MB")
             log_wandb({
-                "val/PQ": metrics["PQ"], "val/SQ": metrics["SQ"],
-                "val/RQ": metrics["RQ"], "val/mIoU": metrics["mIoU"],
+                "epoch/loss": avg_loss, "epoch/lr": lr_now,
+                "epoch/time_s": epoch_time, "epoch/gpu_peak_mb": gpu_mem,
             }, step=global_step)
 
-            if metrics["PQ"] > best_pq:
-                best_pq = metrics["PQ"]
-                save_checkpoint(
-                    os.path.join(save_dir, "best.pth"),
-                    epoch, decoder, optimizer, scheduler, scaler, best_pq, cfg, metrics,
-                )
-                print(f"  Saved best (PQ={best_pq:.4f})")
+        # ── Eval (rank 0 only, others wait at barrier) ──
+        if (epoch + 1) % eval_every == 0 or epoch == tcfg["epochs"] - 1:
+            if is_main:
+                print("  Evaluating...")
+                decoder_raw = decoder.module if is_distributed else decoder
+                metrics = evaluate(decoder_raw, backbone, val_loader, device, cfg)
+                print(f"  PQ={metrics['PQ']:.4f} SQ={metrics['SQ']:.4f} "
+                      f"RQ={metrics['RQ']:.4f} mIoU={metrics['mIoU']:.4f}")
+                log_wandb({
+                    "val/PQ": metrics["PQ"], "val/SQ": metrics["SQ"],
+                    "val/RQ": metrics["RQ"], "val/mIoU": metrics["mIoU"],
+                }, step=global_step)
 
-        # ── Save latest ──
+                if metrics["PQ"] > best_pq:
+                    best_pq = metrics["PQ"]
+                    save_checkpoint(
+                        os.path.join(save_dir, "best.pth"),
+                        epoch, decoder, optimizer, scheduler, scaler, best_pq, cfg, metrics,
+                    )
+                    print(f"  Saved best (PQ={best_pq:.4f})")
+
+            if is_distributed:
+                dist.barrier()
+            # Ensure decoder is back in train mode on all ranks
+            decoder.train()
+
+        # ── Save latest (rank 0 only) ──
         if (epoch + 1) % save_every == 0 or epoch == tcfg["epochs"] - 1:
-            save_checkpoint(
-                os.path.join(save_dir, "latest.pth"),
-                epoch, decoder, optimizer, scheduler, scaler, best_pq, cfg,
-            )
+            if is_main:
+                save_checkpoint(
+                    os.path.join(save_dir, "latest.pth"),
+                    epoch, decoder, optimizer, scheduler, scaler, best_pq, cfg,
+                )
+            if is_distributed:
+                dist.barrier()
 
-    print(f"\nTraining complete. Best PQ: {best_pq:.4f}")
-    if wandb_active:
-        wandb.finish()
+    if is_main:
+        print(f"\nTraining complete. Best PQ: {best_pq:.4f}")
+        if wandb_active:
+            wandb.finish()
+
+    if is_distributed:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

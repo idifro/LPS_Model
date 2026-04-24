@@ -16,6 +16,7 @@ __pycache__/
 wandb/
 third_party/
 panoptic/viz/
+panoptic/checkpoints/
 # Distribution / packaging
 .Python
 build/

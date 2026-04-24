@@ -1,0 +1,536 @@
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/mha2cob/.netrc.
+wandb: Currently logged in as: aharshavardh (aharshavardh-indian-institute-of-science) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run h7ty0u79
+wandb: Tracking run with wandb version 0.24.2
+wandb: Run data is saved locally in /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/wandb/run-20260422_152422-h7ty0u79
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run full-nuscenes-v1
+wandb: ⭐️ View project at https://wandb.ai/aharshavardh-indian-institute-of-science/openscene-panoptic
+wandb: 🚀 View run at https://wandb.ai/aharshavardh-indian-institute-of-science/openscene-panoptic/runs/h7ty0u79
+/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/torch/optim/lr_scheduler.py:131: UserWarning: Detected call of `lr_scheduler.step()` before `optimizer.step()`. In PyTorch 1.1.0 and later, you should call them in the opposite order: `optimizer.step()` before `lr_scheduler.step()`.  Failure to do this will result in PyTorch skipping the first value of the learning rate schedule. See more details at https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
+  warnings.warn("Detected call of `lr_scheduler.step()` before `optimizer.step()`. "
+Traceback (most recent call last):
+  File "panoptic/train/train_panoptic.py", line 644, in <module>
+    if __name__ == "__main__":
+  File "panoptic/train/train_panoptic.py", line 520, in main
+  File "panoptic/train/train_panoptic.py", line 132, in extract_backbone_features
+    output = backbone(sinput)
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/torch/nn/modules/module.py", line 727, in _call_impl
+    result = self.forward(*input, **kwargs)
+socket.send() raised exception.
+  File "/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/models/disnet.py", line 40, in forward
+    return self.net3d(sparse_3d)
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/torch/nn/modules/module.py", line 727, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/models/mink_unet.py", line 134, in forward
+    out_b3p8 = self.block3(out)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/torch/nn/modules/module.py", line 727, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/torch/nn/modules/container.py", line 117, in forward
+    input = module(input)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/torch/nn/modules/module.py", line 727, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/MinkowskiEngine/modules/resnet_block.py", line 55, in forward
+    out = self.conv1(x)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/torch/nn/modules/module.py", line 727, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/MinkowskiEngine/MinkowskiConvolution.py", line 314, in forward
+    outfeat = self.conv.apply(
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/MinkowskiEngine/MinkowskiConvolution.py", line 72, in forward
+    return fw_fn(
+KeyboardInterrupt
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+Error in atexit._run_exitfuncs:
+Traceback (most recent call last):
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 136, in run
+    return future.result()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/concurrent/futures/_base.py", line 444, in result
+    return self.__get_result()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/concurrent/futures/_base.py", line 389, in __get_result
+    raise self._exception
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+socket.send() raised exception.
+socket.send() raised exception.
+    await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 219, in _wrap
+    return await fn()socket.send() raised exception.
+
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_connection.py", line 316, in publish_teardown_and_close
+    await self._client.publish(
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+socket.send() raised exception.
+socket.send() raised exception.
+    await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+socket.send() raised exception.
+    socket.send() raised exception.
+await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+    socket.send() raised exception.
+raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)socket.send() raised exception.
+
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)socket.send() raised exception.
+
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)socket.send() raised exception.
+
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)socket.send() raised exception.
+
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    socket.send() raised exception.
+await self._send_server_request(request)socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+socket.send() raised exception.
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+socket.send() raised exception.
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+socket.send() raised exception.
+    socket.send() raised exception.
+await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    socket.send() raised exception.
+await self._writer.drain()socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+    raise exc
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+socket.send() raised exception.
+    socket.send() raised exception.
+await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+socket.send() raised exception.
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+socket.send() raised exception.
+    socket.send() raised exception.
+await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+socket.send() raised exception.
+    socket.send() raised exception.
+await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)socket.send() raised exception.
+socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)socket.send() raised exception.
+
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+socket.send() raised exception.
+    socket.send() raised exception.
+await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+socket.send() raised exception.
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+socket.send() raised exception.
+    socket.send() raised exception.
+await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+socket.send() raised exception.
+    socket.send() raised exception.
+await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    socket.send() raised exception.
+await self._send_server_request(request)socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()socket.send() raised exception.
+
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+    socket.send() raised exception.
+raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    socket.send() raised exception.
+await fn()socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+socket.send() raised exception.
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+socket.send() raised exception.
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+socket.send() raised exception.
+socket.send() raised exception.
+    await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    socket.send() raised exception.
+await self._writer.drain()socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+    raise excsocket.send() raised exception.
+socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    socket.send() raised exception.
+await fn()socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)socket.send() raised exception.
+
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+    socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)socket.send() raised exception.
+socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+socket.send() raised exception.
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+socket.send() raised exception.
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    socket.send() raised exception.
+await self._send_server_request(request)socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+socket.send() raised exception.
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+socket.send() raised exception.
+socket.send() raised exception.
+    await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+socket.send() raised exception.
+socket.send() raised exception.
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+socket.send() raised exception.
+socket.send() raised exception.
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)socket.send() raised exception.
+socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+socket.send() raised exception.
+    await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+socket.send() raised exception.
+    socket.send() raised exception.
+await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+    socket.send() raised exception.
+raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    socket.send() raised exception.
+socket.send() raised exception.
+await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)socket.send() raised exception.
+socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+socket.send() raised exception.
+    raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+    socket.send() raised exception.
+raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    socket.send() raised exception.
+await self._writer.drain()socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+    raise excsocket.send() raised exception.
+socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()socket.send() raised exception.
+
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+socket.send() raised exception.
+socket.send() raised exception.
+    await self._writer.drain()
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+socket.send() raised exception.
+    socket.send() raised exception.
+raise exc
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/asyncio_manager.py", line 181, in fn_wrap_exceptions
+    await fn()socket.send() raised exception.
+socket.send() raised exception.
+
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 38, in publish
+    await self._send_server_request(request)
+socket.send() raised exception.
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/site-packages/wandb/sdk/lib/service/service_client.py", line 64, in _send_server_request
+    await self._writer.drain()
+socket.send() raised exception.
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/streams.py", line 375, in drain
+    raise exc
+socket.send() raised exception.
+  File "/home/mha2cob/.conda/envs/openscene/lib/python3.8/asyncio/selector_events.py", line 910, in write
+socket.send() raised exception.
+    socket.send() raised exception.
+n = self._sock.send(data)socket.send() raised exception.
+
+BrokenPipeError: [Errno 32] Broken pipe
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.
+socket.send() raised exception.

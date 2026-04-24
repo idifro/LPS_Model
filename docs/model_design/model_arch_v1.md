@@ -1,7 +1,7 @@
 # Model Architecture v1 - Panoptic 3D Segmentation on nuScenes
 
-**Version:** v1 (post-audit, CE loss fix applied)
-**Date:** 2026-04-22
+**Version:** v1.1 (updated for full nuScenes training)
+**Date:** 2026-04-23
 **Files covered:** All files under `panoptic/`
 
 ---
@@ -17,9 +17,11 @@
 7. [Stage 5: Panoptic Inference](#7-stage-5-panoptic-inference)
 8. [Stage 6: Evaluation Metrics](#8-stage-6-evaluation-metrics)
 9. [Training Loop & Optimizer](#9-training-loop--optimizer)
-10. [Dimension Summary Table](#10-dimension-summary-table)
-11. [Design Choices & Rationale](#11-design-choices--rationale)
-12. [File Map](#12-file-map)
+10. [Training Arithmetic: Full nuScenes](#10-training-arithmetic-full-nuscenes)
+11. [Dimension Summary Table](#11-dimension-summary-table)
+12. [Design Choices & Rationale](#12-design-choices--rationale)
+13. [File Map](#13-file-map)
+14. [Config Reference](#14-config-reference)
 
 ---
 
@@ -332,7 +334,7 @@ Typical M ≈ 15-30 per scene
 The backbone was distilled from OpenSeg/CLIP — its features already encode rich semantic information. Fine-tuning would:
 1. Destroy CLIP alignment (needed for future open-vocabulary inference)
 2. Require massive GPU memory (15.6M params + activations)
-3. Risk overfitting on small nuScenes dataset
+3. Risk overfitting on nuScenes dataset
 
 ---
 
@@ -780,7 +782,7 @@ Input: pred_logits (106, 17), pred_masks (V, 106) — from final layer
 
 ## 9. Training Loop & Optimizer
 
-**File:** `panoptic/train/train_panoptic.py`, config: `panoptic/configs/default.yaml`
+**File:** `panoptic/train/train_panoptic.py`
 
 ### 9.1 Optimizer: AdamW
 
@@ -792,7 +794,7 @@ AdamW decouples weight decay from gradient update — better than
 Adam+L2 for transformer architectures.
 ```
 
-### 9.2 Learning Rate Scheduler: Cosine Warmup (default)
+### 9.2 Learning Rate Scheduler: Cosine Warmup
 
 ```
   LR
@@ -803,31 +805,35 @@ Adam+L2 for transformer architectures.
   │                               ╲
   │  1e-6  ─────────────────────────╲───
   └─────────────────────────────────────── epochs
-  0     2                          100
+  0     2                            30
 
-  warmup_steps = warmup_epochs * steps_per_epoch
-  total_steps = epochs * steps_per_epoch
+  IMPORTANT: steps_per_epoch = len(dataloader) // grad_accum
+  This counts OPTIMIZER STEPS (not raw batches), so warmup and
+  cosine decay are computed correctly for gradient accumulation.
+
+  warmup_steps = warmup_epochs × steps_per_epoch
+  total_steps = epochs × steps_per_epoch
   Steps per lr update: every optimizer step (step-level)
 
   Alternatives available via YAML:
   - cosine_annealing: CosineAnnealingLR (epoch-level)
-  - step: StepLR(step_size=80, gamma=0.1) (epoch-level)
+  - step: StepLR(step_size=25, gamma=0.1) (epoch-level)
 ```
 
 ### 9.3 Gradient Accumulation & Clipping
 
 ```
-  grad_accum = 4: accumulate gradients over 4 samples before
-                   optimizer step (effective batch size = 4)
+  grad_accum = 8: accumulate gradients over 8 samples before
+                   optimizer step (effective batch size = 8)
 
   grad_clip = 0.5: clip_grad_norm_ to prevent gradient explosion
                     (common in transformer training)
 
-  Sequence per 4 steps:
+  Sequence per 8 steps:
     step 0: forward + backward (accumulate)
     step 1: forward + backward (accumulate)
-    step 2: forward + backward (accumulate)
-    step 3: forward + backward → clip_grad_norm → optimizer.step → zero_grad
+    ...
+    step 7: forward + backward → clip_grad_norm → optimizer.step → zero_grad
 ```
 
 ### 9.4 Mixed Precision (AMP)
@@ -847,7 +853,7 @@ Adam+L2 for transformer architectures.
 ### 9.5 Training Loop Structure
 
 ```
-  for epoch in range(start_epoch, 100):
+  for epoch in range(start_epoch, 30):
     for step, batch in dataloader:
       │
       ├── Check kill signal (SIGTERM/SIGUSR1)
@@ -858,9 +864,9 @@ Adam+L2 for transformer architectures.
       ├── Every grad_accum steps: clip + optimizer.step + scheduler.step
       └── Log to wandb every log_every steps
     │
-    ├── Evaluate every eval_every epochs
+    ├── Evaluate every eval_every epochs (every 2)
     ├── Save best.pth if PQ improved
-    └── Save latest.pth every save_every epochs
+    └── Save latest.pth every save_every epochs (every 2)
 ```
 
 ### 9.6 Checkpointing
@@ -882,7 +888,184 @@ Adam+L2 for transformer architectures.
 
 ---
 
-## 10. Dimension Summary Table
+## 10. Training Arithmetic: Full nuScenes
+
+**Config:** `panoptic/configs/full_nuscenes.yaml`
+
+### 10.1 Dataset Size
+
+```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  nuScenes v1.0-trainval                                         │
+  │                                                                 │
+  │  Total keyframes:   ~28,130 training  +  ~6,019 validation     │
+  │                                                                 │
+  │  850 scenes × 40 keyframes = 34,000 total                      │
+  │    700 scenes → train split ≈ 28,130 keyframes                 │
+  │    150 scenes → val split   ≈  6,019 keyframes                 │
+  │                                                                 │
+  │  vs. mini:  323 train  +  81 val  (10 scenes)                  │
+  │  Scale-up:  ~87× more training data                            │
+  └─────────────────────────────────────────────────────────────────┘
+```
+
+### 10.2 Per-Sample Statistics
+
+```
+  Raw LiDAR points:    N ≈ 34,000 per scan
+  After range filter:  N' ≈ 30,000
+  After voxelization:  V ≈ 20,000-22,000 voxels
+  GT segments:         M ≈ 15-30 per scene (thing instances + stuff classes)
+```
+
+### 10.3 Iteration & Step Arithmetic
+
+```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  Config Values                                                  │
+  │    batch_size   = 1       (samples per GPU per step)            │
+  │    grad_accum   = 8       (accumulate before optimizer step)    │
+  │    epochs       = 30                                            │
+  │    num_workers  = 4       (dataloader workers)                  │
+  │                                                                 │
+  │  Derived Quantities                                             │
+  │    effective_batch_size = batch_size × grad_accum = 1 × 8 = 8  │
+  │                                                                 │
+  │    batches_per_epoch    = 28,130 / 1 = 28,130 forward passes   │
+  │    optimizer_steps/epoch = 28,130 / 8 = 3,516 optimizer steps  │
+  │                                                                 │
+  │    total_batches        = 28,130 × 30 = 843,900 forward passes │
+  │    total_optimizer_steps = 3,516 × 30 = 105,480 steps          │
+  │                                                                 │
+  │  Scheduler Steps                                                │
+  │    warmup_epochs = 2                                            │
+  │    warmup_steps  = 2 × 3,516 = 7,032 optimizer steps           │
+  │    decay_steps   = 105,480 - 7,032 = 98,448 cosine steps       │
+  │                                                                 │
+  │  LR Schedule                                                    │
+  │    Steps 0 → 7,032:     linear ramp 0 → 1e-4                  │
+  │    Steps 7,032 → 105,480: cosine decay 1e-4 → 1e-6            │
+  └─────────────────────────────────────────────────────────────────┘
+```
+
+### 10.4 Augmentation Multiplier
+
+```
+  Each epoch sees all 28,130 samples with DIFFERENT augmentation:
+    - Random rotation Z:    uniform [0, 2π]    → infinite variants
+    - Random flip X:        50% chance
+    - Random flip Y:        50% chance
+    - Random scale:         uniform [0.95, 1.05]
+    - Random translate:     Gaussian σ=0.1m
+
+  Over 30 epochs:
+    28,130 × 30 = 843,900 augmented samples seen
+    Each unique scene appears 30 times, each differently augmented
+
+  With mini (323 × 100 epochs = 32,300) we had 26× FEWER augmented samples.
+  Full training provides 843,900 augmented samples — 26× more gradient signal.
+```
+
+### 10.5 Evaluation Cadence
+
+```
+  eval_every = 2 epochs
+  Evaluations at: epoch 2, 4, 6, 8, ..., 28, 30
+  Total evaluations: 15
+
+  Each evaluation:
+    6,019 val samples × panoptic_inference → PQ/SQ/RQ/mIoU
+    Estimated time: ~15 min per eval (inference-only, no backward)
+
+  Checkpointing:
+    save_every = 2 epochs → latest.pth every 2 epochs
+    best.pth saved when PQ improves
+```
+
+### 10.6 Time & Throughput Estimates
+
+```
+  ┌─────────────────────────────────────────────────────────────────┐
+  │  Per-sample time (from mini training):                          │
+  │    Backbone forward:   ~37 ms                                   │
+  │    Decoder forward:    ~15 ms                                   │
+  │    Loss + backward:    ~25 ms                                   │
+  │    Overhead:           ~10 ms                                   │
+  │    ─────────────────────────                                    │
+  │    Total per sample:   ~87 ms ≈ 0.09 sec                       │
+  │                                                                 │
+  │  Per epoch:                                                     │
+  │    28,130 × 0.09 sec ≈ 2,532 sec ≈ 42 min                     │
+  │                                                                 │
+  │  Total training (30 epochs):                                    │
+  │    Training:     30 × 42 min = 1,260 min ≈ 21 hours            │
+  │    Evaluations:  15 × 15 min = 225 min ≈ 3.75 hours            │
+  │    ──────────────────────────                                   │
+  │    Estimated total: ~25 hours                                   │
+  │                                                                 │
+  │  Wall-time budget: 48 hours (bsub -W 48:00)                    │
+  │    Comfortable margin for slower epochs, IO, etc.               │
+  └─────────────────────────────────────────────────────────────────┘
+```
+
+### 10.7 Expected Results (Based on Mini + Literature)
+
+```
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  Mini Results (323 train, 25 epochs):                                  │
+  │    PQ = 0.228,  SQ = 0.663,  RQ = 0.288,  mIoU = 0.317              │
+  │                                                                        │
+  │  Full nuScenes Expectations:                                           │
+  │    The 87× data increase should significantly improve PQ.              │
+  │    Conservative targets for 30 epochs:                                 │
+  │      PQ:   0.35 - 0.45  (vs 0.228 on mini)                           │
+  │      SQ:   0.70 - 0.80  (mask quality improves with more instances)   │
+  │      RQ:   0.45 - 0.55  (detection improves with rare class exposure) │
+  │      mIoU: 0.50 - 0.65  (semantic accuracy benefits most from data)   │
+  │                                                                        │
+  │  Reference: MaskPLS (Mask2Former on full nuScenes LiDAR):             │
+  │      PQ = 0.53,  SQ = 0.80,  RQ = 0.64,  mIoU = 0.71                │
+  │    Our model uses frozen OpenScene backbone (not jointly trained),      │
+  │    so expect ~60-80% of MaskPLS numbers as realistic ceiling.          │
+  │                                                                        │
+  │  Key improvements from mini → full:                                    │
+  │    1. Rare class coverage: bicycle, motorcycle, construction_vehicle   │
+  │       had 0 PQ on mini — full dataset has many more instances          │
+  │    2. Object diversity: more pose/size/occlusion variation             │
+  │    3. Scene diversity: different lighting, weather, locations          │
+  │    4. Stuff boundary quality: more examples refine edges              │
+  └────────────────────────────────────────────────────────────────────────┘
+```
+
+### 10.8 Mini vs Full Comparison Table
+
+```
+  ┌───────────────────────┬────────────────────┬─────────────────────┐
+  │ Parameter             │ Mini (default.yaml)│ Full (full_nuscenes)│
+  ├───────────────────────┼────────────────────┼─────────────────────┤
+  │ Dataset version       │ v1.0-mini          │ v1.0-trainval       │
+  │ Train samples         │ 323                │ ~28,130             │
+  │ Val samples           │ 81                 │ ~6,019              │
+  │ Epochs                │ 100                │ 30                  │
+  │ Effective batch size  │ 1 × 4 = 4          │ 1 × 8 = 8          │
+  │ Batches/epoch         │ 323                │ 28,130              │
+  │ Optimizer steps/epoch │ 323 / 4 = 80       │ 28,130 / 8 = 3,516 │
+  │ Total optimizer steps │ 80 × 100 = 8,000   │ 3,516 × 30 =105,480│
+  │ Warmup steps          │ 2 × 80 = 160       │ 2 × 3,516 = 7,032  │
+  │ Augmented samples     │ 32,300              │ 843,900             │
+  │ Eval every            │ 5 epochs           │ 2 epochs            │
+  │ Log every             │ 10 steps           │ 50 steps            │
+  │ num_workers           │ 0                  │ 4                   │
+  │ Checkpoint dir        │ panoptic/checkpoints│ panoptic/checkpoints_full│
+  │ Est. epoch time       │ ~30 sec            │ ~42 min             │
+  │ Est. total time       │ ~50 min            │ ~25 hours           │
+  │ Wall-time limit       │ N/A (interactive)  │ 48 hours (bsub)     │
+  └───────────────────────┴────────────────────┴─────────────────────┘
+```
+
+---
+
+## 11. Dimension Summary Table
 
 ```
   ┌──────────────────────────────────────────────────────────────────────┐
@@ -925,9 +1108,9 @@ Adam+L2 for transformer architectures.
 
 ---
 
-## 11. Design Choices & Rationale
+## 12. Design Choices & Rationale
 
-### 11.1 Architecture Decisions
+### 12.1 Architecture Decisions
 
 | Decision | Choice | Rationale |
 |---|---|---|
@@ -942,7 +1125,7 @@ Adam+L2 for transformer architectures.
 | Two projections | backbone_proj + mask_feat_proj | Separate representations for attention vs mask computation |
 | Level embeddings | 3 learnable, cycling | Simulates multi-scale without actual FPN |
 
-### 11.2 Loss Decisions
+### 12.2 Loss Decisions
 
 | Decision | Choice | Rationale |
 |---|---|---|
@@ -955,26 +1138,30 @@ Adam+L2 for transformer architectures.
 | Matcher p_ratio | 0.75 | Higher than MaskPLS default for matching stability |
 | Point sampling | randperm (no replacement) | Reduces noise vs randint (with replacement) |
 
-### 11.3 Training Decisions
+### 12.3 Training Decisions
 
-| Decision | Choice | Rationale |
+| Decision | Choice (Full) | Rationale |
 |---|---|---|
 | Optimizer | AdamW (lr=1e-4, wd=0.01) | Standard for transformers; decoupled weight decay |
 | Scheduler | Cosine warmup (2 epoch warmup) | Avoids early instability; smooth decay |
-| Grad accumulation | 4 steps | Effective batch size 4 with batch_size=1 |
+| Grad accumulation | 8 steps (eff. batch=8) | Larger effective batch stabilizes training on 28K samples |
 | Grad clipping | max_norm=0.5 | Prevents transformer gradient explosion |
 | Mixed precision | AMP (float16 forward) | Memory savings; backbone already float32 |
+| Epochs | 30 (vs 100 on mini) | ~13× more steps/epoch; 30 epochs yields 105K optimizer steps |
+| Eval frequency | Every 2 epochs | ~84 min between evals; frequent enough to track convergence |
+| Log frequency | Every 50 steps | ~4.4 sec apart; enough resolution without log spam |
 | Voxel size | 0.05m | Must match OpenScene checkpoint; ~20K voxels/scene |
 | Augmentation | Rotate Z, flip X/Y, scale, translate | Standard LiDAR augmentation; applied before voxelization |
 
 ---
 
-## 12. File Map
+## 13. File Map
 
 ```
 panoptic/
 ├── configs/
-│   └── default.yaml              ← All hyperparameters in one place
+│   ├── default.yaml              ← Mini config (v1.0-mini, 323 samples)
+│   └── full_nuscenes.yaml        ← Full config (v1.0-trainval, ~28K samples)
 │
 ├── dataset/
 │   └── nuscenes_panoptic.py      ← Dataset: loading, voxelization, GT mask construction
@@ -1013,54 +1200,118 @@ panoptic/
 │                                    Backbone loading, AMP, wandb, resume,
 │                                    signal handler, panoptic_inference()
 │
-├── checkpoints/                  ← Saved model weights
+├── checkpoints/                  ← Mini training weights
 │   ├── best.pth
 │   └── latest.pth
 │
-└── scripts/
-    ├── inspect_openscene_checkpoint.py
-    └── validate_per_sample_forward.py
+├── checkpoints_full/             ← Full training weights
+│   ├── best.pth
+│   └── latest.pth
+│
+├── scripts/
+│   ├── train_full_job.sh         ← bsub job script for full nuScenes
+│   ├── verify_matcher_and_eval.py
+│   ├── verify_phase3_semantic_proxy.py
+│   ├── inspect_openscene_checkpoint.py
+│   └── validate_per_sample_forward.py
+│
+└── logs/                         ← Training stdout/stderr from bsub
 ```
 
 ---
 
-## Appendix: Config Reference (default.yaml)
+## 14. Config Reference
+
+### 14.1 Full nuScenes Config (`full_nuscenes.yaml`)
 
 ```yaml
 data:
-  voxel_size: 0.05          # Must match backbone training
+  dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes
+  version: v1.0-trainval
+  voxel_size: 0.05
   point_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
 
+augmentation:
+  enabled: true
+  random_rotate_z: true
+  random_flip_x: true
+  random_flip_y: true
+  random_scale_min: 0.95
+  random_scale_max: 1.05
+  random_translate_std: 0.1
+
 model:
-  backbone_dim: 768          # DisNet output dim (CLIP space)
-  hidden_dim: 256            # Decoder internal dim
-  num_classes: 16            # 10 things + 6 stuff
-  num_thing_queries: 100     # Learnable thing queries
-  num_stuff_classes: 6       # Fixed stuff queries
-  nheads: 8                  # Attention heads (head_dim=32)
-  dim_feedforward: 1024      # FFN expansion (4x)
-  num_blocks: 3              # Decoder blocks
-  num_levels: 3              # Virtual feature levels
-  dropout: 0.0               # No dropout (small dataset)
+  backbone_ckpt: models/nuscenes_openseg.pth.tar
+  backbone_dim: 768
+  hidden_dim: 256
+  num_classes: 16            # 10 thing + 6 stuff
+  num_thing_queries: 100
+  num_stuff_classes: 6
+  nheads: 8                  # head_dim = 256/8 = 32
+  dim_feedforward: 1024      # 4× expansion
+  num_blocks: 3
+  num_levels: 3
+  dropout: 0.0
 
 loss:
-  weight_ce: 2.0             # Classification loss weight
-  weight_mask: 5.0           # BCE mask loss weight
-  weight_dice: 5.0           # Dice mask loss weight
-  eos_coef: 0.1              # No-object class weight
-  cost_class: 2.0            # Matcher class cost weight
-  cost_mask: 5.0             # Matcher BCE cost weight
-  cost_dice: 5.0             # Matcher dice cost weight
-  p_ratio: 0.75              # Matcher point sampling ratio
+  eos_coef: 0.1              # no-object class weight
+  weight_ce: 2.0
+  weight_mask: 5.0
+  weight_dice: 5.0
+  cost_class: 2.0            # matcher weights
+  cost_mask: 5.0
+  cost_dice: 5.0
+  num_points: 50000          # max points for mask loss
+  p_ratio: 0.75              # matcher subsampling ratio
 
 training:
-  lr: 1e-4                   # Peak learning rate
-  weight_decay: 0.01         # AdamW weight decay
-  grad_clip: 0.5             # Gradient norm clipping
-  grad_accum: 4              # Gradient accumulation steps
-  scheduler: cosine_warmup   # LR schedule type
-  warmup_epochs: 2           # Linear warmup duration
-  min_lr: 1e-6               # Cosine decay floor
-  mixed_precision: true      # AMP (float16)
+  epochs: 30
+  lr: 1.0e-4                 # peak lr
+  weight_decay: 0.01
+  grad_clip: 0.5
+  grad_accum: 8              # effective batch = 8
+  batch_size: 1
+  num_workers: 4
   seed: 42
+  scheduler: cosine_warmup
+  warmup_epochs: 2           # 7,032 warmup steps
+  min_lr: 1.0e-6             # cosine floor
+  mixed_precision: true
+
+logging:
+  log_every: 50
+  eval_every: 2
+  wandb_project: openscene-panoptic
+  wandb_run_name: full-nuscenes-v1
+
+checkpoint:
+  save_dir: panoptic/checkpoints_full
+  save_every: 2
+  auto_resume: true
+
+inference:
+  overlap_thr: 0.8
+  min_points: 50
+```
+
+### 14.2 Mini Config Differences (`default.yaml`)
+
+```yaml
+# Only showing values that differ from full_nuscenes.yaml:
+data:
+  dataroot: .../nuscenes_mini
+  version: v1.0-mini
+
+training:
+  epochs: 100                # more epochs to compensate for tiny dataset
+  grad_accum: 4              # smaller effective batch (4 vs 8)
+  num_workers: 0             # single-threaded for tiny dataset
+
+logging:
+  log_every: 10              # log more often (fewer steps/epoch)
+  eval_every: 5
+
+checkpoint:
+  save_dir: panoptic/checkpoints
+  save_every: 5
 ```
