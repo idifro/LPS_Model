@@ -11,9 +11,12 @@
 
 # ── Environment setup ──
 module load conda
-conda activate openscene
+source activate openscene
 module load cuda/11.0.2
 module load cudnn/11.0_v8.0
+
+# Ensure CUDA libraries are visible (conda activate can clobber LD_LIBRARY_PATH)
+export LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
 
 cd /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene
 export PYTHONPATH=/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene

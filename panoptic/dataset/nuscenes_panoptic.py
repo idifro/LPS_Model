@@ -119,6 +119,7 @@ class NuScenesPanoptic(Dataset):
         point_range: np.ndarray = None,
         augment: bool = False,
         aug_cfg: dict = None,
+        nusc: "NuScenes" = None,
     ):
         self.dataroot = dataroot
         self.version = version
@@ -127,7 +128,7 @@ class NuScenesPanoptic(Dataset):
         self.augment = augment
         self.aug_cfg = aug_cfg or {}
 
-        self.nusc = NuScenes(version=version, dataroot=dataroot, verbose=False)
+        self.nusc = nusc if nusc is not None else NuScenes(version=version, dataroot=dataroot, verbose=False)
 
         # Build sample list for split
         splits = create_splits_scenes()

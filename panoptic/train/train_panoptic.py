@@ -389,6 +389,15 @@ def log_wandb(data, step=None):
         wandb.log(data, step=step)
 
 
+def log_wandb_artifact(path, name, artifact_type="model", metadata=None):
+    """Log a checkpoint file as a wandb artifact."""
+    if not HAS_WANDB or wandb.run is None:
+        return
+    artifact = wandb.Artifact(name, type=artifact_type, metadata=metadata or {})
+    artifact.add_file(path)
+    wandb.log_artifact(artifact)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Main
 # ══════════════════════════════════════════════════════════════════════════════
@@ -423,21 +432,25 @@ def main():
     if is_main:
         print(f"[WandB] {'Active' if wandb_active else 'Disabled'}")
 
-    # ── Data ──
+    # ── Data (share NuScenes object between train/val to save ~2GB RAM) ──
     dcfg = cfg["data"]
     acfg = cfg["augmentation"]
+    from nuscenes.nuscenes import NuScenes as NuScenesDB
+    nusc = NuScenesDB(version=dcfg["version"], dataroot=dcfg["dataroot"], verbose=False)
     train_ds = NuScenesPanoptic(
         dcfg["dataroot"], dcfg["version"], split="train",
         voxel_size=dcfg["voxel_size"],
         point_range=np.array(dcfg["point_range"]),
         augment=acfg["enabled"],
         aug_cfg=acfg,
+        nusc=nusc,
     )
     val_ds = NuScenesPanoptic(
         dcfg["dataroot"], dcfg["version"], split="val",
         voxel_size=dcfg["voxel_size"],
         point_range=np.array(dcfg["point_range"]),
         augment=False,
+        nusc=nusc,
     )
     tcfg = cfg["training"]
 
@@ -586,7 +599,7 @@ def main():
                         "classes": [batch["gt_classes"].to(device)],
                         "masks": [batch["gt_masks"].float().to(device)],
                     }
-                    losses = criterion(outputs, targets)
+                    losses, _ = criterion(outputs, targets)
                     total_loss = sum(losses.values()) / tcfg["grad_accum"]
                 scaler.scale(total_loss).backward()
             else:
@@ -595,7 +608,7 @@ def main():
                     "classes": [batch["gt_classes"].to(device)],
                     "masks": [batch["gt_masks"].float().to(device)],
                 }
-                losses = criterion(outputs, targets)
+                losses, _ = criterion(outputs, targets)
                 total_loss = sum(losses.values()) / tcfg["grad_accum"]
                 total_loss.backward()
 
@@ -696,6 +709,11 @@ def main():
                         epoch, decoder, optimizer, scheduler, scaler, best_pq, cfg, metrics,
                     )
                     print(f"  Saved best (PQ={best_pq:.4f})")
+                    log_wandb_artifact(
+                        os.path.join(save_dir, "best.pth"),
+                        name="best-checkpoint",
+                        metadata={"epoch": epoch, "PQ": float(best_pq)},
+                    )
 
             if is_distributed:
                 dist.barrier()
@@ -708,6 +726,11 @@ def main():
                 save_checkpoint(
                     os.path.join(save_dir, "latest.pth"),
                     epoch, decoder, optimizer, scheduler, scaler, best_pq, cfg,
+                )
+                log_wandb_artifact(
+                    os.path.join(save_dir, "latest.pth"),
+                    name="latest-checkpoint",
+                    metadata={"epoch": epoch, "best_pq": float(best_pq)},
                 )
             if is_distributed:
                 dist.barrier()

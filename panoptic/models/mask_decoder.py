@@ -9,6 +9,7 @@ from torch import nn
 
 from panoptic.models.blocks import SelfAttentionLayer, CrossAttentionLayer, FFNLayer, MLP
 from panoptic.models.positional_encoder import PositionalEncoder
+from panoptic.models.clip_token_head import CLIPTokenHead
 
 
 class PanopticDecoder(nn.Module):
@@ -24,6 +25,8 @@ class PanopticDecoder(nn.Module):
         num_blocks=3,
         num_levels=3,
         dropout=0.0,
+        use_token_head=False,
+        token_dim=768,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -82,6 +85,9 @@ class PanopticDecoder(nn.Module):
         self.class_embed = nn.Linear(hidden_dim, num_classes + 1)  # +1 for no-object
         self.mask_embed = MLP(hidden_dim, hidden_dim, hidden_dim, 3)
 
+        # Optional CLIP token head
+        self.token_head = CLIPTokenHead(hidden_dim, token_dim) if use_token_head else None
+
     def forward(self, backbone_feats, coords, pad_mask=None):
         """
         Args:
@@ -113,6 +119,7 @@ class PanopticDecoder(nn.Module):
 
         predictions_class = []
         predictions_mask = []
+        predictions_tokens = []
 
         # Initial prediction (before any decoder layer)
         outputs_class, outputs_mask, attn_mask = self.pred_heads(
@@ -120,6 +127,8 @@ class PanopticDecoder(nn.Module):
         )
         predictions_class.append(outputs_class)
         predictions_mask.append(outputs_mask)
+        if self.token_head is not None:
+            predictions_tokens.append(self.token_head(self.decoder_norm(output)))
 
         for i in range(self.num_layers):
             level_idx = i % self.num_levels
@@ -154,6 +163,8 @@ class PanopticDecoder(nn.Module):
             )
             predictions_class.append(outputs_class)
             predictions_mask.append(outputs_mask)
+            if self.token_head is not None:
+                predictions_tokens.append(self.token_head(self.decoder_norm(output)))
 
         assert len(predictions_class) == self.num_layers + 1
 
@@ -161,10 +172,19 @@ class PanopticDecoder(nn.Module):
             "pred_logits": predictions_class[-1],  # (B, 106, 17)
             "pred_masks": predictions_mask[-1],     # (B, V, 106)
         }
-        out["aux_outputs"] = [
-            {"pred_logits": c, "pred_masks": m}
-            for c, m in zip(predictions_class[:-1], predictions_mask[:-1])
-        ]
+        if self.token_head is not None:
+            out["pred_tokens"] = predictions_tokens[-1]  # (B, 106, token_dim)
+        if self.token_head is not None and predictions_tokens:
+            out["aux_outputs"] = [
+                {"pred_logits": c, "pred_masks": m, "pred_tokens": t}
+                for c, m, t in zip(predictions_class[:-1], predictions_mask[:-1],
+                                   predictions_tokens[:-1])
+            ]
+        else:
+            out["aux_outputs"] = [
+                {"pred_logits": c, "pred_masks": m}
+                for c, m in zip(predictions_class[:-1], predictions_mask[:-1])
+            ]
         return out
 
     def pred_heads(self, output, mask_features, pad_mask=None):

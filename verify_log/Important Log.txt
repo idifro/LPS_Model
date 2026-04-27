@@ -1,3 +1,5 @@
+hf_token = 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
+
 ============================================================
 TEST 3.1: Wrap frozen DisNet cleanly
 ============================================================

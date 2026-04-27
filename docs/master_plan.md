@@ -1321,8 +1321,13 @@ Only after Gate G should long full-data experiments begin.
 - [x] comprehensive per-class evaluation (evaluate_full.py)
 - [x] panoptic visualization tooling (visualize_panoptic.py)
 - [x] 4-GPU DDP code + config (backward-compatible, awaiting run)
-- [ ] implement token head and text prototypes
-- [ ] run mini token training
+- [x] implement token head and text prototypes
+- [x] run mini token training (PQ=0.2328)
+- [x] run full token v1 training (PQ_linear=0.429, PQ_token=0.410)
+- [x] run full token v2 training (PQ_linear=0.476, PQ_token=0.468)
+- [x] comprehensive 5-mode evaluation (linear, token, ensemble, open-vocab, backbone-pool)
+- [ ] implement class-agnostic training (Option B2: objectness head)
+- [ ] implement camera cross-attention (Option B4b: feature concat)
 
 ## Priority 3 — novel module
 
@@ -1637,6 +1642,70 @@ Status: Code ready, job script corrected (torchrun env issue fixed), awaiting su
 - `docs/model_design/model_arch_v1.md` — updated to v1.2 with actual results
 
 ### Gate D.5: PASSED — Full nuScenes training achieves PQ=0.473, evaluation and visualization tooling complete.
+
+---
+
+## Phase 5 — CLIP Token Head (COMPLETE, 2026-04-27)
+
+### Objective
+
+Add a CLIP-space token head per query for text-aligned mask classification alongside the existing linear head.
+
+### Tasks completed
+
+| Task | Status | Details |
+|---|---|---|
+| Text prototype generation | DONE | `generate_text_prototypes.py` — 16 classes, ViT-L/14@336, "a {label} in a scene" |
+| CLIPTokenHead module | DONE | MLP(256→512→768) + L2-norm, ~0.5M params |
+| Token loss (cosine v1) | DONE | 1 - cos_sim(pred, gt_proto), warmup schedule |
+| Token loss (contrastive v2) | DONE | InfoNCE with learnable temperature, aux token loss on all 9 layers |
+| Differential LR | DONE | decoder=1e-5, token_head=5e-5 |
+| Mini token training | DONE | PQ=0.2328 on v1.0-mini |
+| Full token v1 training | DONE | PQ_linear=0.429, PQ_token=0.410 (weak warm-start from mini) |
+| Full token v2 training | DONE | PQ_linear=0.476, PQ_token=0.468 (proper warm-start from PQ=0.473) |
+| Comprehensive evaluation | DONE | 5 modes: linear, token-16, ensemble, token-openvocab, backbone-pool |
+| WandB artifact logging | DONE | best-checkpoint and latest-checkpoint artifacts in both training scripts |
+| HuggingFace push script | DONE | All checkpoints, configs, docs |
+
+### Phase 5 v2 Results (best checkpoint, v1.0-trainval val)
+
+| Mode | PQ | SQ | RQ | mIoU |
+|---|---|---|---|---|
+| A. Linear | **0.4759** | 0.7912 | 0.5841 | 0.4311 |
+| B. Token-16 | 0.4684 | 0.7939 | 0.5751 | 0.4190 |
+| C. Ensemble (best α=0.0) | 0.4684 | 0.7939 | 0.5751 | 0.4190 |
+| D. Token-OpenVocab (22) | 0.4684 | — | — | — |
+| E. Backbone-Pool (22) | 0.2090 | 0.6655 | 0.2479 | 0.1688 |
+
+### Key findings
+
+1. **v2 fixed v1 regression**: Linear PQ 0.429→0.476, Token PQ 0.410→0.468. Differential LR preserved mask quality.
+2. **Token head competitive**: Only -0.008 PQ below linear, wins on rare classes (barrier, trailer, other_flat, construction_vehicle).
+3. **Open-vocab not achieved**: Token novel detections = 0. Contrastive loss collapsed to 16-class classifier — every query maps to one of 16 known prototypes.
+4. **Backbone pooling = noise**: PQ=0.209, 25M voxels classified as "pole". Raw backbone features too noisy for per-mask classification.
+5. **Ensemble doesn't help**: Best at α=0.0 (pure token). Linear and cosine score scales are incompatible.
+
+### Analysis and next steps
+
+The token head is a strong closed-set classifier but not open-vocabulary. Two paths forward:
+- **B2 (Objectness head)**: Class-agnostic training — remove CE loss, classify via backbone pooling at inference
+- **B4b (Camera features)**: Add 2D CLIP image features to the decoder via feature concatenation
+
+### Files created/modified in Phase 5
+
+- `panoptic/models/clip_token_head.py` — CLIPTokenHead module
+- `panoptic/losses/token_loss.py` — Cosine + contrastive loss with learnable temperature
+- `panoptic/scripts/generate_text_prototypes.py` — Text prototype generation
+- `panoptic/train/train_panoptic_token.py` — Full training script (differential LR, aux token loss)
+- `panoptic/scripts/evaluate_token.py` — 3-mode evaluation
+- `panoptic/scripts/evaluate_comprehensive.py` — 5-mode evaluation with open-vocab
+- `panoptic/scripts/push_to_hf.py` — HuggingFace upload
+- `panoptic/configs/mini_token.yaml`, `full_nuscenes_token.yaml`, `full_nuscenes_token_v2.yaml`
+- `panoptic/scripts/train_token_job.sh` — bsub job script
+- `docs/model_design/model_arch_token_v1.md` — Full architecture documentation
+- `docs/open_vocab_ablation.md` — Open-vocab evaluation design
+
+### Gate E: PASSED — Token head works without collapse, PQ_token=0.468 close to linear PQ=0.476.
 
 ---
 

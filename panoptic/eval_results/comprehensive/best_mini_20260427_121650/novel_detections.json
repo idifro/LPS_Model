@@ -1,0 +1,42 @@
+{
+  "token_openvocab": {
+    "pole": {
+      "voxels": 0
+    },
+    "bench": {
+      "voxels": 0
+    },
+    "trash can": {
+      "voxels": 0
+    },
+    "fire hydrant": {
+      "voxels": 0
+    },
+    "tree trunk": {
+      "voxels": 0
+    },
+    "curb": {
+      "voxels": 0
+    }
+  },
+  "backbone_openvocab": {
+    "pole": {
+      "voxels": 463488
+    },
+    "bench": {
+      "voxels": 0
+    },
+    "trash can": {
+      "voxels": 0
+    },
+    "fire hydrant": {
+      "voxels": 0
+    },
+    "tree trunk": {
+      "voxels": 0
+    },
+    "curb": {
+      "voxels": 0
+    }
+  }
+}

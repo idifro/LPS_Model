@@ -78,7 +78,7 @@ class PanopticLoss(nn.Module):
                 if w_key in loss_name:
                     weighted[loss_name] = loss_val * w_val
                     break
-        return weighted
+        return weighted, indices
 
     def _get_losses(self, outputs, targets, indices, num_masks):
         losses = {}

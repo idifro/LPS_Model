@@ -1,0 +1,11 @@
+======================================================================
+  Comprehensive Panoptic Evaluation
+======================================================================
+  Config:     panoptic/configs/full_nuscenes_token_v2.yaml
+  Checkpoint: panoptic/checkpoints_token_full_v2/best.pth
+  Version:    v1.0-mini
+  Modes:      ['linear', 'token', 'ensemble', 'token_openvocab', 'backbone_openvocab']
+  Output:     panoptic/eval_results/comprehensive/best_mini_20260427_113657
+======================================================================
+
+Loading NuScenes database...

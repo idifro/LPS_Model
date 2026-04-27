@@ -17,6 +17,11 @@ wandb/
 third_party/
 panoptic/viz/
 panoptic/checkpoints/
+pantoptic/clip_prototypes/
+panoptic/clip_prototypes/
+panoptic/logs/
+panoptic/checkpoints_token_full_v1/
+panoptic/checkpoints_token_full_v2/
 # Distribution / packaging
 .Python
 build/

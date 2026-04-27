@@ -1,0 +1,252 @@
+======================================================================
+  Comprehensive Panoptic Evaluation
+======================================================================
+  Config:     panoptic/configs/mini_token.yaml
+  Checkpoint: panoptic/checkpoints_token_full_v2/best.pth
+  Version:    v1.0-mini
+  Modes:      ['linear', 'token', 'ensemble', 'token_openvocab', 'backbone_openvocab']
+  Output:     panoptic/eval_results/comprehensive/best_mini_20260427_121650
+======================================================================
+
+Loading NuScenes database...
+[NuScenesPanoptic] val: 81 samples from v1.0-mini
+Val: 81 samples
+
+Token head detected: True
+
+Generating novel class prototypes with CLIP...
+Saved 22-class prototypes to panoptic/clip_prototypes/text_prototypes_vitl14_336_22class.pt
+16-class prototypes: torch.Size([16, 768])
+22-class prototypes: torch.Size([22, 768])
+
+Evaluating 81 samples across modes: ['linear', 'token', 'ensemble', 'token_openvocab', 'backbone_openvocab']
+
+  [50/81]
+
+======================================================================
+  RESULTS
+======================================================================
+
+  Mode: linear
+  PQ=0.3562  SQ=0.5354  RQ=0.4369  mIoU=0.3255
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.0000   0.0000   0.0000   0.0000
+  bicycle                     0.3200   0.8000   0.4000   0.0121
+  bus                         0.4886   0.7853   0.6222   0.3556
+  car                         0.8296   0.8759   0.9471   0.7822
+  construction_vehicle        0.0000   0.0000   0.0000   0.0000
+  motorcycle                  0.1150   0.7474   0.1538   0.0296
+  pedestrian                  0.7459   0.8330   0.8955   0.4336
+  traffic_cone                0.0000   0.0000   0.0000   0.0000
+  trailer                     0.0000   0.0000   0.0000   0.0000
+  truck                       0.6241   0.9139   0.6829   0.4999
+  driveable_surface           0.8538   0.8538   1.0000   0.8519
+  other_flat                  0.0000   0.0000   0.0000   0.0000
+  sidewalk                    0.2293   0.5792   0.3958   0.2808
+  terrain                     0.0911   0.5534   0.1647   0.3696
+  manmade                     0.6213   0.8248   0.7532   0.8017
+  vegetation                  0.7803   0.8006   0.9747   0.7905
+
+  Mode: token
+  PQ=0.3416  SQ=0.4866  RQ=0.4176  mIoU=0.3367
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.0000   0.0000   0.0000   0.0000
+  bicycle                     0.0000   0.0000   0.0000   0.0125
+  bus                         0.6292   0.8180   0.7692   0.5776
+  car                         0.8273   0.8740   0.9466   0.7825
+  construction_vehicle        0.0000   0.0000   0.0000   0.0000
+  motorcycle                  0.1433   0.6927   0.2069   0.0517
+  pedestrian                  0.7560   0.8324   0.9083   0.4419
+  traffic_cone                0.0000   0.0000   0.0000   0.0000
+  trailer                     0.0000   0.0000   0.0000   0.0000
+  truck                       0.4701   0.9317   0.5045   0.4238
+  driveable_surface           0.8512   0.8512   1.0000   0.8490
+  other_flat                  0.0000   0.0000   0.0000   0.0000
+  sidewalk                    0.2188   0.5991   0.3652   0.3536
+  terrain                     0.0967   0.5526   0.1750   0.3168
+  manmade                     0.6761   0.8330   0.8116   0.7833
+  vegetation                  0.7964   0.8014   0.9938   0.7938
+
+  Mode: ensemble_a0.0
+  PQ=0.3416  SQ=0.4866  RQ=0.4176  mIoU=0.3367
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.0000   0.0000   0.0000   0.0000
+  bicycle                     0.0000   0.0000   0.0000   0.0125
+  bus                         0.6292   0.8180   0.7692   0.5776
+  car                         0.8273   0.8740   0.9466   0.7825
+  construction_vehicle        0.0000   0.0000   0.0000   0.0000
+  motorcycle                  0.1433   0.6927   0.2069   0.0517
+  pedestrian                  0.7560   0.8324   0.9083   0.4419
+  traffic_cone                0.0000   0.0000   0.0000   0.0000
+  trailer                     0.0000   0.0000   0.0000   0.0000
+  truck                       0.4701   0.9317   0.5045   0.4238
+  driveable_surface           0.8512   0.8512   1.0000   0.8490
+  other_flat                  0.0000   0.0000   0.0000   0.0000
+  sidewalk                    0.2188   0.5991   0.3652   0.3536
+  terrain                     0.0967   0.5526   0.1750   0.3168
+  manmade                     0.6761   0.8330   0.8116   0.7833
+  vegetation                  0.7964   0.8014   0.9938   0.7938
+
+  Mode: ensemble_a0.3
+  PQ=0.3440  SQ=0.4881  RQ=0.4209  mIoU=0.3386
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.0000   0.0000   0.0000   0.0000
+  bicycle                     0.0000   0.0000   0.0000   0.0134
+  bus                         0.6445   0.8190   0.7869   0.5854
+  car                         0.8246   0.8736   0.9439   0.7790
+  construction_vehicle        0.0000   0.0000   0.0000   0.0000
+  motorcycle                  0.1150   0.7474   0.1538   0.0294
+  pedestrian                  0.7548   0.8314   0.9079   0.4374
+  traffic_cone                0.0000   0.0000   0.0000   0.0000
+  trailer                     0.0000   0.0000   0.0000   0.0000
+  truck                       0.5075   0.9210   0.5510   0.4473
+  driveable_surface           0.8512   0.8512   1.0000   0.8490
+  other_flat                  0.0000   0.0000   0.0000   0.0000
+  sidewalk                    0.2207   0.5991   0.3684   0.3559
+  terrain                     0.1081   0.5471   0.1975   0.3343
+  manmade                     0.6806   0.8190   0.8310   0.7922
+  vegetation                  0.7964   0.8013   0.9938   0.7937
+
+  Mode: ensemble_a0.5
+  PQ=0.3440  SQ=0.4879  RQ=0.4210  mIoU=0.3395
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.0000   0.0000   0.0000   0.0000
+  bicycle                     0.0000   0.0000   0.0000   0.0150
+  bus                         0.6375   0.8177   0.7797   0.5636
+  car                         0.8248   0.8739   0.9437   0.7821
+  construction_vehicle        0.0000   0.0000   0.0000   0.0000
+  motorcycle                  0.1150   0.7474   0.1538   0.0294
+  pedestrian                  0.7500   0.8310   0.9025   0.4304
+  traffic_cone                0.0000   0.0000   0.0000   0.0000
+  trailer                     0.0000   0.0000   0.0000   0.0000
+  truck                       0.5219   0.9182   0.5684   0.4882
+  driveable_surface           0.8512   0.8512   1.0000   0.8490
+  other_flat                  0.0000   0.0000   0.0000   0.0000
+  sidewalk                    0.2227   0.5991   0.3717   0.3540
+  terrain                     0.1081   0.5471   0.1975   0.3343
+  manmade                     0.6758   0.8189   0.8252   0.7925
+  vegetation                  0.7965   0.8015   0.9938   0.7940
+
+  Mode: ensemble_a0.7
+  PQ=0.3438  SQ=0.4870  RQ=0.4214  mIoU=0.3410
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.0000   0.0000   0.0000   0.0000
+  bicycle                     0.0000   0.0000   0.0000   0.0150
+  bus                         0.6445   0.8126   0.7931   0.5692
+  car                         0.8215   0.8731   0.9410   0.7830
+  construction_vehicle        0.0000   0.0000   0.0000   0.0000
+  motorcycle                  0.1150   0.7474   0.1538   0.0294
+  pedestrian                  0.7432   0.8284   0.8972   0.4224
+  traffic_cone                0.0000   0.0000   0.0000   0.0000
+  trailer                     0.0000   0.0000   0.0000   0.0000
+  truck                       0.5291   0.9111   0.5806   0.4946
+  driveable_surface           0.8513   0.8513   1.0000   0.8490
+  other_flat                  0.0000   0.0000   0.0000   0.0000
+  sidewalk                    0.2245   0.5987   0.3750   0.3566
+  terrain                     0.1069   0.5476   0.1951   0.3500
+  manmade                     0.6710   0.8189   0.8194   0.7936
+  vegetation                  0.7931   0.8031   0.9875   0.7936
+
+  Mode: ensemble_a1.0
+  PQ=0.3596  SQ=0.5345  RQ=0.4423  mIoU=0.3289
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.0000   0.0000   0.0000   0.0000
+  bicycle                     0.4000   0.8000   0.5000   0.0134
+  bus                         0.5141   0.7711   0.6667   0.4074
+  car                         0.8273   0.8763   0.9440   0.7857
+  construction_vehicle        0.0000   0.0000   0.0000   0.0000
+  motorcycle                  0.1150   0.7474   0.1538   0.0294
+  pedestrian                  0.7317   0.8279   0.8838   0.4000
+  traffic_cone                0.0000   0.0000   0.0000   0.0000
+  trailer                     0.0000   0.0000   0.0000   0.0000
+  truck                       0.6043   0.9172   0.6588   0.5322
+  driveable_surface           0.8538   0.8538   1.0000   0.8519
+  other_flat                  0.0000   0.0000   0.0000   0.0000
+  sidewalk                    0.2268   0.5789   0.3918   0.2802
+  terrain                     0.0912   0.5539   0.1647   0.3697
+  manmade                     0.6093   0.8247   0.7389   0.8030
+  vegetation                  0.7799   0.8001   0.9747   0.7896
+
+  Mode: token_openvocab_known
+  PQ=0.3416  SQ=0.4866  RQ=0.4176  mIoU=0.3367
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.0000   0.0000   0.0000   0.0000
+  bicycle                     0.0000   0.0000   0.0000   0.0125
+  bus                         0.6292   0.8180   0.7692   0.5776
+  car                         0.8273   0.8740   0.9466   0.7825
+  construction_vehicle        0.0000   0.0000   0.0000   0.0000
+  motorcycle                  0.1433   0.6927   0.2069   0.0517
+  pedestrian                  0.7560   0.8324   0.9083   0.4419
+  traffic_cone                0.0000   0.0000   0.0000   0.0000
+  trailer                     0.0000   0.0000   0.0000   0.0000
+  truck                       0.4701   0.9317   0.5045   0.4238
+  driveable_surface           0.8512   0.8512   1.0000   0.8490
+  other_flat                  0.0000   0.0000   0.0000   0.0000
+  sidewalk                    0.2188   0.5991   0.3652   0.3536
+  terrain                     0.0967   0.5526   0.1750   0.3168
+  manmade                     0.6761   0.8330   0.8116   0.7833
+  vegetation                  0.7964   0.8014   0.9938   0.7938
+
+  Mode: backbone_openvocab_known
+  PQ=0.1741  SQ=0.3522  RQ=0.2081  mIoU=0.1412
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.0000   0.0000   0.0000   0.0000
+  bicycle                     0.0000   0.0000   0.0000   0.0000
+  bus                         0.5040   0.7920   0.6364   0.4734
+  car                         0.7849   0.8714   0.9008   0.7341
+  construction_vehicle        0.0000   0.0000   0.0000   0.0000
+  motorcycle                  0.0000   0.0000   0.0000   0.0000
+  pedestrian                  0.5150   0.8422   0.6115   0.0064
+  traffic_cone                0.0000   0.0000   0.0000   0.0000
+  trailer                     0.0000   0.0000   0.0000   0.0000
+  truck                       0.6756   0.9240   0.7312   0.6002
+  driveable_surface           0.1066   0.8760   0.1217   0.0789
+  other_flat                  0.0000   0.0000   0.0000   0.0000
+  sidewalk                    0.1837   0.5993   0.3066   0.3350
+  terrain                     0.0000   0.0000   0.0000   0.0000
+  manmade                     0.0000   0.0000   0.0000   0.0000
+  vegetation                  0.0162   0.7304   0.0222   0.0309
+
+
+======================================================================
+  SUMMARY
+======================================================================
+  Mode                                 PQ       SQ       RQ     mIoU    Novel Vox
+  --------------------------------------------------------------------------
+  linear                           0.3562   0.5354   0.4369   0.3255          N/A
+  token                            0.3416   0.4866   0.4176   0.3367          N/A
+  ensemble_a0.0                    0.3416   0.4866   0.4176   0.3367          N/A
+  ensemble_a0.3                    0.3440   0.4881   0.4209   0.3386          N/A
+  ensemble_a0.5                    0.3440   0.4879   0.4210   0.3395          N/A
+  ensemble_a0.7                    0.3438   0.4870   0.4214   0.3410          N/A
+  ensemble_a1.0                    0.3596   0.5345   0.4423   0.3289          N/A
+  token_openvocab_known            0.3416   0.4866   0.4176   0.3367            0
+  backbone_openvocab_known         0.1741   0.3522   0.2081   0.1412      463,488
+
+  Best ensemble: ensemble_a1.0 (PQ=0.3596)
+
+======================================================================
+  NOVEL CLASS DETECTIONS (D: Token-OpenVocab vs E: Backbone-Pool)
+======================================================================
+  Novel Class              Token-OV  Backbone-Pool     Winner
+  ------------------------------------------------------------
+  pole                            0        463,488   Backbone
+  bench                           0              0        Tie
+  trash can                       0              0        Tie
+  fire hydrant                    0              0        Tie
+  tree trunk                      0              0        Tie
+  curb                            0              0        Tie
+
+Saved results.json to panoptic/eval_results/comprehensive/best_mini_20260427_121650
+Saved novel_detections.json to panoptic/eval_results/comprehensive/best_mini_20260427_121650
+
+Done. All outputs in: panoptic/eval_results/comprehensive/best_mini_20260427_121650
