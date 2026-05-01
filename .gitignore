@@ -22,6 +22,10 @@ panoptic/clip_prototypes/
 panoptic/logs/
 panoptic/checkpoints_token_full_v1/
 panoptic/checkpoints_token_full_v2/
+panoptic/checkpoints_b2b/
+panoptic/checkpoints_b2b_mini/
+panoptic/checkpoints_b2b_smoke/
+panoptic/embeddings/
 # Distribution / packaging
 .Python
 build/

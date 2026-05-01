@@ -1326,8 +1326,10 @@ Only after Gate G should long full-data experiments begin.
 - [x] run full token v1 training (PQ_linear=0.429, PQ_token=0.410)
 - [x] run full token v2 training (PQ_linear=0.476, PQ_token=0.468)
 - [x] comprehensive 5-mode evaluation (linear, token, ensemble, open-vocab, backbone-pool)
-- [ ] implement class-agnostic training (Option B2: objectness head)
-- [ ] implement camera cross-attention (Option B4b: feature concat)
+- [x] implement class-agnostic training (Phase 5a / B2b)
+- [ ] run Phase 5a full training + evaluation
+- [ ] implement camera feature concat (Phase 5b / B4b)
+- [ ] run Phase 5b full training + evaluation
 
 ## Priority 3 — novel module
 
@@ -1706,6 +1708,76 @@ The token head is a strong closed-set classifier but not open-vocabulary. Two pa
 - `docs/open_vocab_ablation.md` — Open-vocab evaluation design
 
 ### Gate E: PASSED — Token head works without collapse, PQ_token=0.468 close to linear PQ=0.476.
+
+---
+
+## Phase 5a — Class-Agnostic Training (B2b) — Open-Vocab Experiment
+
+### Objective
+
+Train with mask+dice loss only (`weight_ce=0.0`, `cost_class=0.0`). Classify at
+inference via backbone feature pooling against 22 CLIP text prototypes (16 known + 6 novel).
+Tests whether removing classification bias enables true open-vocabulary detection.
+
+### Approach
+
+- Config-driven: zero code changes to decoder, loss, or matcher
+- Warm-start from Phase 4 best checkpoint (PQ=0.473)
+- Inference: objectness scoring (`max(sigmoid(mask))`) → backbone feature pooling → cosine sim to 22 prototypes
+- Novel classes: pole, bench, trash can, fire hydrant, tree trunk, curb
+
+### Files created
+
+- `panoptic/configs/full_nuscenes_b2b.yaml` — Config (weight_ce=0, cost_class=0)
+- `panoptic/train/train_panoptic_b2b.py` — Training script with class-agnostic eval
+- `panoptic/scripts/evaluate_b2b.py` — 3-mode eval (pool22, objectness sweep, pool16)
+- `panoptic/scripts/visualize_b2b.py` — Visualization with 22-class panoptic + novel highlights
+- `panoptic/scripts/train_b2b_job.sh` — HPC bsub job
+- `docs/model_design/model_arch_b2b.md` — Architecture documentation (14 sections)
+
+### Results
+
+*[To be filled after training]*
+
+### Gate F: PENDING — PQ_known > 0.30 AND novel_voxels > 0.
+
+---
+
+## Phase 5b — Camera Feature Concatenation (B4b)
+
+### Objective
+
+Concatenate frozen CLIP ViT-L/14@336px camera patch features with backbone features.
+Widen decoder projection input from 768 to 1536. Tests whether 2D visual features
+improve 3D panoptic segmentation quality.
+
+### Approach
+
+- New `CameraFeatureExtractor` module: frozen CLIP ViT → 3D→2D projection → bilinear sample → (V, 768)
+- Concatenate: backbone (V, 768) || camera (V, 768) → (V, 1536)
+- Decoder `input_dim` parameter (backward compatible, defaults to backbone_dim)
+- Dataset returns calibration data via `return_calibration=True` flag
+- Warm-start from Phase 4 with `strict=False` (proj layers reinitialize)
+
+### Files to create
+
+- `panoptic/models/camera_feature_extractor.py` — Frozen CLIP ViT + projection + sampling
+- `panoptic/configs/full_nuscenes_b4b.yaml` — Config (input_dim=1536, camera enabled)
+- `panoptic/train/train_panoptic_camera.py` — Training script with camera pipeline
+- `panoptic/scripts/evaluate_b4b.py` — Evaluation with camera features
+- `panoptic/scripts/visualize_b4b.py` — Visualization + camera visibility map
+- `docs/model_design/model_arch_b4b.md` — Architecture documentation (14 sections)
+
+### Files to modify (backward compatible)
+
+- `panoptic/models/mask_decoder.py` — Add `input_dim=None` parameter
+- `panoptic/dataset/nuscenes_panoptic.py` — Add `return_calibration=False` parameter
+
+### Results
+
+*[To be filled after training]*
+
+### Gate G: PENDING — PQ > 0.47 (Phase 4 baseline).
 
 ---
 
