@@ -1,0 +1,49 @@
+# ─── NuScenes Panoptic CLIP Demo — Configuration ──────────────────────────────
+# All paths are resolved relative to the repo root unless absolute.
+# Edit paths here; app.py reads and resolves them at startup.
+
+# ── NuScenes dataset ──────────────────────────────────────────────────────────
+data:
+  dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini
+  version: v1.0-mini
+  voxel_size: 0.05
+  point_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+
+# ── Model architecture ────────────────────────────────────────────────────────
+model:
+  backbone_ckpt: models/nuscenes_openseg.pth.tar   # DisNet (MinkUNet18A)
+  backbone_dim: 768
+  hidden_dim: 256
+  num_classes: 16
+  num_thing_queries: 100
+  num_stuff_classes: 6
+  nheads: 8
+  dim_feedforward: 1024
+  num_blocks: 3
+  num_levels: 3
+  dropout: 0.0
+  use_token_head: true
+  token_dim: 768
+
+# ── Checkpoints ───────────────────────────────────────────────────────────────
+checkpoint:
+  decoder_ckpt: panoptic/checkpoints_token_full_v2/best.pth
+
+# ── CLIP token head ───────────────────────────────────────────────────────────
+token:
+  prototype_path: panoptic/clip_prototypes/text_prototypes_vitl14_336.pt
+  clip_model: ViT-L/14@336px
+
+# ── Panoptic inference ────────────────────────────────────────────────────────
+inference:
+  overlap_thr: 0.8
+  min_points: 1
+  ensemble_alpha: 0.5          # weight for linear head in ensemble (0=token-only, 1=linear-only)
+
+# ── Demo visualisation ────────────────────────────────────────────────────────
+demo:
+  min_mask_area: 50            # voxels; discard dead/empty query slots below this
+  default_threshold: 0.20      # default cosine similarity threshold for text query
+  point_size: 4                # radius of projected LiDAR points in pixels
+  alpha: 0.75                  # camera overlay blending factor (0=image, 1=full overlay)
+  max_depth: 50.0              # max LiDAR projection depth in metres

@@ -26,6 +26,7 @@ panoptic/checkpoints_b2b/
 panoptic/checkpoints_b2b_mini/
 panoptic/checkpoints_b2b_smoke/
 panoptic/embeddings/
+demo_openscene/
 # Distribution / packaging
 .Python
 build/
