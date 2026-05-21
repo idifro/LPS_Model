@@ -121,6 +121,31 @@ class NuScenesPanoptic(Dataset):
         aug_cfg: dict = None,
         nusc: "NuScenes" = None,
     ):
+        """Initialize NuScenes panoptic dataset by loading the API and building the sample token list.
+
+        Used at the start of training/validation to prepare the dataset object that
+        a DataLoader will iterate over. Instantiates the NuScenes devkit (or reuses
+        a provided one), resolves the split name for mini/full versions, and filters
+        sample tokens to those belonging to scenes in the requested split.
+
+        Steps:
+            1. Store hyperparameters (voxel size, point range, augmentation config).
+            2. Instantiate (or reuse) the NuScenes API object.
+            3. Resolve split key (e.g. 'mini_train') via ``create_splits_scenes``.
+            4. Collect all sample tokens whose parent scene is in the split.
+
+        Args:
+            dataroot (str): Absolute path to the nuScenes dataset root directory.
+            version (str): Dataset version string, e.g. ``"v1.0-mini"`` or ``"v1.0-trainval"``.
+            split (str): One of ``"train"`` or ``"val"``.
+            voxel_size (float): Side length of cubic voxels in meters.
+            point_range (np.ndarray): Bounding box ``[xmin, ymin, zmin, xmax, ymax, zmax]``
+                for filtering points; shape ``(6,)``.
+            augment (bool): Whether to apply geometric augmentations during ``__getitem__``.
+            aug_cfg (dict): Augmentation parameters (rotation, flip, scale, translation).
+            nusc (NuScenes | None): Pre-instantiated NuScenes object to share across
+                datasets and avoid redundant disk I/O.
+        """
         self.dataroot = dataroot
         self.version = version
         self.voxel_size = voxel_size
@@ -146,9 +171,54 @@ class NuScenesPanoptic(Dataset):
         print(f"[NuScenesPanoptic] {split}: {len(self.tokens)} samples from {version}")
 
     def __len__(self):
+        """Return the total number of samples (keyframes) available in this split.
+
+        Called by the DataLoader to determine epoch length and by samplers to
+        know the index range.
+
+        Steps:
+            1. Return the length of the pre-built token list.
+
+        Returns:
+            int: Number of nuScenes sample tokens in the current split.
+        """
         return len(self.tokens)
 
     def __getitem__(self, idx):
+        """Load a single LiDAR sweep with panoptic labels, voxelize, and build GT masks.
+
+        This is the core data-loading method called by the DataLoader for each
+        training/validation sample. It produces voxelized point clouds with
+        per-voxel semantic labels and per-instance/stuff binary masks suitable
+        for mask-classification panoptic heads (e.g. MaskPLS, Mask2Former).
+
+        Steps:
+            1. Load LiDAR point cloud from disk (single LIDAR_TOP sweep).
+            2. Load panoptic label file and decode semantic/instance IDs.
+            3. Apply bounding-box range filter on original coordinates.
+            4. Apply geometric augmentations (rotation, flip, scale, translate) if enabled.
+            5. Voxelize: quantize coordinates, deduplicate via ``np.unique``.
+            6. Map general nuScenes semantics to 16-class panoptic labels (0-indexed).
+            7. Build GT masks: one binary mask per thing instance + one per stuff class.
+            8. Collect 6 camera image paths for optional multi-modal fusion.
+            9. Convert everything to PyTorch tensors and return as a dict.
+
+        Args:
+            idx (int): Index into the sample token list, range ``[0, len(self))``.
+
+        Returns:
+            dict: Dictionary with keys:
+                - ``vox_coords``: ``torch.IntTensor`` of shape ``(V, 3)`` — voxel grid indices.
+                - ``vox_feats``: ``torch.FloatTensor`` of shape ``(V, 3)`` — XYZ coordinates as features.
+                - ``gt_masks``: ``torch.BoolTensor`` of shape ``(M, V)`` — binary mask per segment.
+                - ``gt_classes``: ``torch.LongTensor`` of shape ``(M,)`` — 0-indexed class per mask.
+                - ``gt_sem``: ``torch.LongTensor`` of shape ``(V,)`` — per-voxel semantic (255=ignore).
+                - ``inv_idx``: ``torch.LongTensor`` of shape ``(N,)`` — point-to-voxel inverse map.
+                - ``num_points``: int — number of points after range filtering.
+                - ``num_voxels``: int — number of unique voxels V.
+                - ``cam_paths``: list of 6 str — absolute paths to camera images.
+                - ``token``: str — nuScenes sample token.
+        """
         token = self.tokens[idx]
         sample = self.nusc.get("sample", token)
 

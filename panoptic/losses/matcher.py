@@ -11,7 +11,47 @@ from torch.cuda.amp import autocast
 
 
 class HungarianMatcher(nn.Module):
+    """Bipartite matching between predicted queries and ground-truth instances.
+
+    Used during training to find the optimal one-to-one assignment between
+    the set of predicted queries (Q) and the set of ground-truth segments (M)
+    so that subsequent losses are computed on matched pairs only.
+
+    The matcher builds a (Q, M) cost matrix combining three terms:
+        1. Classification cost  — negative softmax probability for the GT class.
+        2. Mask BCE cost        — point-wise sigmoid cross-entropy between masks.
+        3. Mask Dice cost       — 1 minus the soft Dice coefficient.
+    It then solves the linear sum assignment (Hungarian algorithm) per sample.
+
+    Args:
+        cost_class (float): Weight for classification cost term.
+        cost_mask (float): Weight for sigmoid binary cross-entropy mask cost.
+        cost_dice (float): Weight for Dice mask cost.
+        p_ratio (float): Fraction of points randomly sampled for mask cost
+            computation (reduces memory for large point clouds).
+
+    Returns (in forward):
+        list[tuple[Tensor, Tensor]]: Per-batch matched (pred_idx, tgt_idx).
+    """
+
     def __init__(self, cost_class=2.0, cost_mask=5.0, cost_dice=5.0, p_ratio=0.4):
+        """Initialize the HungarianMatcher with cost term weights.
+
+        Stores the relative importance of each cost component and the point
+        sampling ratio used to reduce memory during mask cost computation.
+        Called once when PanopticLoss is instantiated.
+
+        Args:
+            cost_class (float): Weight applied to the classification cost matrix.
+                Higher values prioritize matching queries that already predict
+                the correct class. Default: 2.0.
+            cost_mask (float): Weight applied to the sigmoid BCE mask cost.
+                Default: 5.0.
+            cost_dice (float): Weight applied to the Dice mask cost.
+                Default: 5.0.
+            p_ratio (float): Fraction of voxel points to randomly sample when
+                computing mask costs, in range (0, 1]. Default: 0.4.
+        """
         super().__init__()
         self.cost_class = cost_class
         self.cost_mask = cost_mask

@@ -27,6 +27,26 @@ class CLIPTokenLoss(nn.Module):
     def __init__(self, text_prototypes, num_classes=16,
                  loss_type="cosine", init_temperature=0.07,
                  learnable_temperature=True):
+        """Initialize CLIPTokenLoss with frozen text prototypes and temperature.
+
+        Registers the CLIP text embeddings as a non-trainable buffer so they
+        move with the model to the correct device. For contrastive mode, sets
+        up a log-temperature parameter (optionally learnable) that scales the
+        cosine similarity logits before cross-entropy, following the CLIP design.
+
+        Args:
+            text_prototypes (Tensor): Pre-computed L2-normalized CLIP text
+                embeddings of shape (num_classes, token_dim).
+            num_classes (int): Number of foreground classes. Queries matched
+                to class indices >= num_classes are excluded. Default: 16.
+            loss_type (str): Either 'cosine' (1 - cos_sim) or 'contrastive'
+                (InfoNCE with temperature scaling). Default: 'cosine'.
+            init_temperature (float): Initial temperature tau for contrastive
+                loss; stored as log(1/tau). Default: 0.07.
+            learnable_temperature (bool): If True and loss_type is 'contrastive',
+                the log-temperature is an nn.Parameter optimized during training.
+                Default: True.
+        """
         super().__init__()
         self.num_classes = num_classes
         self.loss_type = loss_type

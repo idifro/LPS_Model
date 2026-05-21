@@ -72,6 +72,53 @@ class Point3DLoader(torch.utils.data.Dataset):
                  data_aug_saturation_max=0.2,
                  eval_all=False, input_color=False
                  ):
+        """Initialize the 3D point cloud dataset by discovering .pth files, configuring
+        the voxelizer, setting up data-augmentation transforms, and optionally
+        pre-loading all scenes into POSIX shared memory for faster training.
+
+        Called once when the DataLoader is constructed in the training or evaluation
+        script. Every subsequent ``__getitem__`` call relies on the state built here.
+
+        Steps:
+            1. Glob all ``*.pth`` files under ``<datapath_prefix>/<split>/``.
+            2. Instantiate a ``Voxelizer`` with the given ``voxel_size`` and
+               class-level augmentation bounds.
+            3. If ``aug`` is True, compose elastic-distortion, flip, and chromatic
+               augmentation transforms for training.
+            4. If ``memcache_init`` is True and shared-memory segments do not yet
+               exist, iterate over every ``.pth`` file with a multi-worker
+               DataLoader and write (locs, feats, labels) into ``/dev/shm``.
+
+        Args:
+            datapath_prefix (str): Root directory containing the ``<split>/``
+                sub-folder with ``.pth`` point-cloud files.
+            voxel_size (float): Edge length (in metres) of each voxel used for
+                sparse-voxel down-sampling.
+            split (str | None): Dataset split name (``'train'``, ``'val'``,
+                ``'test'``), used as a sub-directory and shared-memory key.
+            aug (bool): Whether to enable geometric and chromatic augmentation.
+            memcache_init (bool): Whether to cache all point clouds in POSIX
+                shared memory (``/dev/shm``) for zero-copy reads.
+            identifier (int): Unique integer appended to shared-memory segment
+                names so that multiple runs do not collide.
+            loop (int): Multiplier applied to ``__len__`` so the dataloader
+                iterates over the dataset ``loop`` times per epoch.
+            data_aug_color_trans_ratio (float): Maximum ratio for chromatic
+                translation augmentation.
+            data_aug_color_jitter_std (float): Standard deviation for chromatic
+                jitter augmentation.
+            data_aug_hue_max (float): Maximum hue shift for HSV augmentation.
+            data_aug_saturation_max (float): Maximum saturation shift for HSV
+                augmentation.
+            eval_all (bool): If True, ``__getitem__`` returns the *original*
+                (un-voxelized) labels together with reconstruction indices so
+                that predictions can be mapped back to every input point.
+            input_color (bool): If True, normalized point colours are returned
+                as features; otherwise all-ones features are used.
+
+        Returns:
+            None
+        """
         super().__init__()
         self.split = split
         if split is None:
@@ -135,7 +182,40 @@ class Point3DLoader(torch.utils.data.Dataset):
                   (datapath_prefix, split, len(self.data_paths)))
 
     def __getitem__(self, index_long):
+        """Load a single point-cloud scene, apply augmentation and voxelization,
+        and return sparse-voxel tensors ready for the 3-D backbone.
 
+        Called by the PyTorch DataLoader on every iteration. The ``index_long``
+        may exceed the number of files when ``self.loop > 1``; a modulo maps it
+        back to a valid file index.
+
+        Steps:
+            1. Load (locs, feats, labels) from shared memory or disk (``.pth``).
+            2. Remap ignore labels (``-100 -> 255``) and rescale colours to
+               ``[0, 255]``.
+            3. Optionally apply elastic-distortion pre-voxel transform.
+            4. Voxelize with ``self.voxelizer`` to obtain sparse coordinates and
+               the reconstruction index array.
+            5. Optionally apply chromatic / flip augmentations.
+            6. Prepend a batch-index column of ones to ``coords``.
+            7. Return colour features or all-ones depending on ``input_color``.
+
+        Args:
+            index_long (int): Sample index supplied by the DataLoader sampler.
+                Wrapped via modulo to handle ``loop > 1``.
+
+        Returns:
+            tuple: When ``eval_all`` is False:
+                - coords (torch.IntTensor): Voxel coordinates, shape
+                  ``(N_vox, 4)`` where columns are ``(batch_idx, x, y, z)``.
+                - feats (torch.FloatTensor): Per-voxel colour features, shape
+                  ``(N_vox, 3)``.
+                - labels (torch.LongTensor): Semantic labels, shape
+                  ``(N_vox,)``.
+            tuple: When ``eval_all`` is True the above plus:
+                - inds_reconstruct (torch.LongTensor): Mapping from each
+                  original point to its voxel, shape ``(N_pts,)``.
+        """
         index = index_long % len(self.data_paths)
         if self.use_shm:
             locs_in = SA.attach("shm://%s_%s_%06d_locs_%08d" %
@@ -174,4 +254,19 @@ class Point3DLoader(torch.utils.data.Dataset):
         return coords, feats, labels
 
     def __len__(self):
+        """Return the effective dataset length, accounting for the loop multiplier.
+
+        Called by the PyTorch DataLoader to determine how many samples constitute
+        one epoch. Multiplying by ``self.loop`` lets the trainer see every scene
+        multiple times per epoch without external wrappers.
+
+        Steps:
+            1. Compute ``len(self.data_paths) * self.loop``.
+
+        Args:
+            None
+
+        Returns:
+            int: Total number of indexable samples (files times loop factor).
+        """
         return len(self.data_paths) * self.loop

@@ -52,6 +52,25 @@ REPO_ROOT = "/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene"
 
 
 def main():
+    """Stage and upload panoptic model artifacts to HuggingFace Hub.
+
+    This is the entry point for pushing checkpoints, configs, prototypes,
+    and documentation files to a HuggingFace model repository. Supports
+    a dry-run mode that lists files without uploading.
+
+    Steps:
+        1. Parses CLI arguments for repo ID and dry-run flag.
+        2. Validates the HF_TOKEN environment variable.
+        3. Copies all files from FILE_MAP into a temporary staging directory,
+           skipping any that do not exist on disk.
+        4. If dry-run, prints the file list and exits.
+        5. Otherwise, creates the HF repo if needed and uploads the staging
+           folder via the HuggingFace Hub API.
+        6. Cleans up the staging directory.
+
+    Returns:
+        int: Exit code (0 for success, 1 for error).
+    """
     parser = argparse.ArgumentParser(description="Push model artifacts to HuggingFace Hub")
     parser.add_argument("--repo", default="idifro/LPS_Linear", help="HuggingFace repo ID")
     parser.add_argument("--dry-run", action="store_true", help="List files without uploading")

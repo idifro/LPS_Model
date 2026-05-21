@@ -24,6 +24,23 @@ from panoptic.dataset.nuscenes_panoptic import (
 
 
 def load_backbone(ckpt_path, device):
+    """Load the pretrained DisNet backbone with all parameters frozen for inference.
+
+    Used to provide 768-d CLIP-aligned voxel features to the panoptic decoder
+    during matcher and evaluation verification.
+
+    Steps:
+        1. Constructs a DisNet with MinkUNet18A architecture and openseg config.
+        2. Loads checkpoint weights with 'module.' prefix stripping (strict mode).
+        3. Sets model to eval mode and disables gradient computation on all params.
+
+    Args:
+        ckpt_path (str): Path to the pretrained OpenScene checkpoint (.pth.tar).
+        device (torch.device): Target device (cuda or cpu).
+
+    Returns:
+        DisNet: The frozen backbone model ready for feature extraction.
+    """
     class Cfg:
         feature_2d_extractor = "openseg"
         arch_3d = "MinkUNet18A"
@@ -39,6 +56,25 @@ def load_backbone(ckpt_path, device):
 
 
 def extract_features(backbone, batch, device):
+    """Extract 768-d backbone features from a single-sample batch dictionary.
+
+    Prepares voxel coordinates and features from the dataset batch format into a
+    MinkowskiEngine SparseTensor and runs the frozen backbone forward pass.
+
+    Steps:
+        1. Reads vox_coords and vox_feats from the batch dictionary.
+        2. Prepends a zero batch-index column to coordinates for ME SparseTensor.
+        3. Runs the backbone in no_grad mode and extracts dense features.
+        4. Returns features and coordinates both unsqueezed to (1, V, D) for decoder input.
+
+    Args:
+        backbone (DisNet): Frozen backbone model.
+        batch (dict): Single sample dict with 'vox_coords' (V, 3) and 'vox_feats' (V, 3).
+        device (torch.device): Target device for tensor placement.
+
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]: (feats, coords) each shaped (1, V, D) and (1, V, 3).
+    """
     vox_coords = batch["vox_coords"]
     vox_feats = batch["vox_feats"]
     V = vox_coords.shape[0]
@@ -51,6 +87,27 @@ def extract_features(backbone, batch, device):
 
 
 def panoptic_inference(pred_logits, pred_masks, num_classes=16):
+    """Convert raw decoder predictions into panoptic segmentation (semantic + instance maps).
+
+    Implements greedy mask-first panoptic fusion: iterates over predicted masks sorted by
+    confidence, assigns each to a semantic class and instance ID while respecting overlap rules.
+
+    Steps:
+        1. Computes per-query class scores via softmax and filters out no-object predictions.
+        2. Sorts remaining queries by descending confidence score.
+        3. For each query, binarizes its mask at threshold 0.5 and checks overlap with
+           already-assigned voxels (requires >= 80% of mask to be unoccupied).
+        4. Assigns thing classes unique instance IDs; merges stuff classes into shared IDs.
+
+    Args:
+        pred_logits (torch.Tensor): Query classification logits, shape (Q, num_classes+1).
+        pred_masks (torch.Tensor): Query mask logits, shape (V, Q).
+        num_classes (int): Number of semantic classes (default 16).
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: (sem_pred, inst_pred) both of shape (V,) with
+            semantic class labels and instance IDs respectively.
+    """
     scores, labels = pred_logits.softmax(-1).max(-1)
     masks = pred_masks.sigmoid()
     V = masks.shape[0]
@@ -90,6 +147,21 @@ def panoptic_inference(pred_logits, pred_masks, num_classes=16):
 
 
 def main():
+    """Run matcher and evaluation acceptance tests for the panoptic pipeline.
+
+    Serves as the integration verification script confirming that the Hungarian matcher
+    produces non-empty matches and that the PanopticEval evaluator runs to completion.
+
+    Steps:
+        1. Loads the val split of NuScenesPanoptic and initializes backbone + decoder.
+        2. TEST 1: Runs the matcher on 20 frames, checking that >= 80% have non-empty matches.
+        3. TEST 2: Runs full panoptic inference and feeds results into PanopticEval,
+           reporting PQ, SQ, RQ, and mIoU metrics per-class.
+        4. Prints a summary of pass/fail status for both tests.
+
+    Returns:
+        None: Prints test results and metrics to stdout.
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 

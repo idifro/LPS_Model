@@ -105,6 +105,20 @@ def check_collate(ds):
 
 
 def main():
+    """Run end-to-end validation of the NuScenesPanoptic dataset and collate function.
+
+    Used as the Phase 1 acceptance gate to confirm that the dataset implementation
+    correctly loads, voxelizes, and encodes panoptic ground truth before training begins.
+
+    Steps:
+        1. Instantiates train and val NuScenesPanoptic datasets and reports their lengths.
+        2. Validates 10 random training samples via check_sample (shape, range, file checks).
+        3. Validates one val sample for cross-split consistency.
+        4. Tests panoptic_collate with batch_size=2 to verify batched coordinate indexing.
+
+    Returns:
+        None: Prints per-sample diagnostics and raises AssertionError on any failure.
+    """
     print("=" * 60)
     print("Phase 1 Verification — NuScenesPanoptic Dataset")
     print("=" * 60)

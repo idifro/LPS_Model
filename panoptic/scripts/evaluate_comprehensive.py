@@ -46,30 +46,115 @@ ALL_MODES = ["linear", "token", "ensemble", "token_openvocab", "backbone_openvoc
 
 # ── TeeLogger ──────────────────────────────────────────────────────────────
 class TeeLogger:
-    """Duplicate stdout to a log file."""
+    """Duplicate stdout to both the terminal and a log file simultaneously.
+
+    Used in the comprehensive evaluation script to capture all printed output
+    into a persistent log file while still displaying it in real time on the
+    console.
+
+    Attributes:
+        terminal: The original sys.stdout stream.
+        log: File handle opened for writing at the specified log_path.
+    """
     def __init__(self, log_path):
+        """Initialize TeeLogger by opening the log file for writing.
+
+        Creates the dual-output logger that will mirror all writes to both
+        the original stdout and the specified log file on disk.
+
+        Steps:
+            1. Stores a reference to the current sys.stdout as self.terminal.
+            2. Opens log_path in write mode as self.log.
+
+        Args:
+            log_path (str): Absolute path where the log file will be created.
+        """
         self.terminal = sys.stdout
         self.log = open(log_path, "w")
 
     def write(self, msg):
+        """Write a message to both the terminal and the log file.
+
+        Called implicitly by print() when sys.stdout is replaced with this
+        TeeLogger instance, ensuring output appears in both destinations.
+
+        Steps:
+            1. Writes msg to the original terminal stream.
+            2. Writes msg to the opened log file.
+
+        Args:
+            msg (str): The string to write.
+        """
         self.terminal.write(msg)
         self.log.write(msg)
 
     def flush(self):
+        """Flush both the terminal and log file output buffers.
+
+        Ensures that all buffered output is immediately written to the
+        underlying streams, preventing data loss on crash or early exit.
+
+        Steps:
+            1. Flushes the terminal stream buffer.
+            2. Flushes the log file buffer.
+        """
         self.terminal.flush()
         self.log.flush()
 
     def close(self):
+        """Close the log file handle.
+
+        Should be called when evaluation is complete to release the file
+        descriptor. The terminal stream is not closed as it belongs to
+        the process.
+
+        Steps:
+            1. Closes the log file handle.
+        """
         self.log.close()
 
 
 # ── Model loading ──────────────────────────────────────────────────────────
 def load_config(config_path):
+    """Load a YAML configuration file and return it as a dictionary.
+
+    Used at the start of comprehensive evaluation to read all model, data,
+    inference, and token hyperparameters from a single config file.
+
+    Steps:
+        1. Opens the file at config_path in read mode.
+        2. Parses the YAML content with yaml.safe_load.
+        3. Returns the resulting nested dictionary.
+
+    Args:
+        config_path (str): Path to the YAML configuration file.
+
+    Returns:
+        dict: Parsed configuration dictionary.
+    """
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
 
 def load_backbone(ckpt_path, device):
+    """Load the DisNet 3D backbone from checkpoint and freeze all parameters.
+
+    Used in the comprehensive evaluation pipeline to provide per-voxel
+    features that are consumed by the panoptic decoder and optionally
+    pooled for the backbone open-vocabulary baseline (Mode E).
+
+    Steps:
+        1. Instantiates DisNet with openseg/MinkUNet18A configuration.
+        2. Loads and cleans the state dict from the checkpoint file.
+        3. Sets the model to eval mode and disables gradient computation.
+
+    Args:
+        ckpt_path (str): Path to the backbone .pth.tar checkpoint.
+        device (torch.device): Target device (cpu or cuda).
+
+    Returns:
+        DisNet: The loaded and frozen backbone model.
+    """
     class Cfg:
         feature_2d_extractor = "openseg"
         arch_3d = "MinkUNet18A"
@@ -84,6 +169,26 @@ def load_backbone(ckpt_path, device):
 
 
 def extract_backbone_features(backbone, batch, device):
+    """Extract per-voxel features from the 3D backbone for a single sample.
+
+    Called once per validation sample to produce the feature tensor that
+    feeds into both the panoptic decoder and the backbone pooling baseline.
+
+    Steps:
+        1. Prepends a batch-index column of zeros to voxel coordinates.
+        2. Constructs a MinkowskiEngine SparseTensor on the target device.
+        3. Runs the backbone in no-grad mode.
+        4. Returns features and coordinates each with a leading batch dim.
+
+    Args:
+        backbone (DisNet): The frozen 3D backbone model.
+        batch (dict): Dataset sample containing 'vox_coords' and 'vox_feats'.
+        device (torch.device): Target device for computation.
+
+    Returns:
+        tuple: (feats, coords_xyz) where feats is (1, V, D) and
+            coords_xyz is (1, V, 3).
+    """
     vox_coords = batch["vox_coords"]
     vox_feats = batch["vox_feats"]
     V = vox_coords.shape[0]
@@ -209,6 +314,26 @@ def _greedy_assign(scores, labels, masks, V, overlap_thr, thing_set=None):
 
 
 def panoptic_inference_linear(pred_logits, pred_masks, num_classes=16, overlap_thr=0.8):
+    """Perform panoptic inference using the linear classification head (Mode A).
+
+    Applies softmax over predicted logits to obtain class scores, filters
+    out the no-object class, and delegates to greedy mask assignment.
+
+    Steps:
+        1. Softmax on pred_logits, take max score and argmax label per query.
+        2. Sigmoid on pred_masks to get per-voxel mask probabilities.
+        3. Filters queries whose predicted class is the no-object class.
+        4. Calls _greedy_assign for final panoptic assignment.
+
+    Args:
+        pred_logits (Tensor): Query logits of shape (Q, C+1).
+        pred_masks (Tensor): Mask logits of shape (V, Q).
+        num_classes (int): Number of valid classes (default 16).
+        overlap_thr (float): Minimum overlap ratio for mask acceptance.
+
+    Returns:
+        tuple: (sem_pred, inst_pred) numpy arrays of shape (V,).
+    """
     scores, labels = pred_logits.softmax(-1).max(-1)
     masks = pred_masks.sigmoid()
     V = masks.shape[0]
@@ -235,6 +360,30 @@ def panoptic_inference_token(pred_tokens, pred_masks, text_prototypes, overlap_t
 
 def panoptic_inference_ensemble(pred_logits, pred_tokens, pred_masks, text_prototypes,
                                  num_classes=16, overlap_thr=0.8, alpha=0.5):
+    """Perform panoptic inference by blending linear and token scores (Mode C).
+
+    Combines the softmax probability from the linear head with the normalized
+    cosine similarity from the token head using a weighted sum controlled by
+    alpha, then applies greedy mask assignment.
+
+    Steps:
+        1. Computes linear softmax probabilities over the known classes.
+        2. Computes cosine similarity between tokens and text prototypes.
+        3. Normalizes cosine similarities to [0, 1] and blends with alpha.
+        4. Filters low-score queries and delegates to _greedy_assign.
+
+    Args:
+        pred_logits (Tensor): Query logits of shape (Q, C+1).
+        pred_tokens (Tensor): Query token embeddings of shape (Q, D).
+        pred_masks (Tensor): Mask logits of shape (V, Q).
+        text_prototypes (Tensor): Text embeddings of shape (C, D).
+        num_classes (int): Number of valid classes (default 16).
+        overlap_thr (float): Minimum overlap ratio for mask acceptance.
+        alpha (float): Blending weight; 1.0 = pure linear, 0.0 = pure token.
+
+    Returns:
+        tuple: (sem_pred, inst_pred) numpy arrays of shape (V,).
+    """
     linear_probs = pred_logits[:, :num_classes].softmax(-1)
     cos_sim = torch.mm(pred_tokens, text_prototypes.t())
     cos_sim_norm = (cos_sim + 1) / 2
@@ -300,6 +449,26 @@ def remap_novel_to_ignore(sem_pred, inst_pred, num_known=16):
 
 # ── Table formatting ───────────────────────────────────────────────────────
 def format_table(pq_all, sq_all, rq_all, iou_all, class_names):
+    """Format per-class PQ/SQ/RQ/IoU metrics as an aligned text table.
+
+    Used after evaluation to produce human-readable output for both
+    console display and saving to per-mode text files.
+
+    Steps:
+        1. Creates a header row with column names.
+        2. Iterates over class_names, formatting each metric to 4 decimals.
+        3. Joins all lines with newlines and returns the result.
+
+    Args:
+        pq_all (array-like): Per-class PQ values.
+        sq_all (array-like): Per-class SQ values.
+        rq_all (array-like): Per-class RQ values.
+        iou_all (array-like): Per-class IoU values.
+        class_names (list[str]): List of class name strings.
+
+    Returns:
+        str: Multi-line formatted table string.
+    """
     lines = []
     lines.append(f"  {'Class':<25s} {'PQ':>8s} {'SQ':>8s} {'RQ':>8s} {'IoU':>8s}")
     lines.append(f"  {'-'*57}")
@@ -314,6 +483,24 @@ def format_table(pq_all, sq_all, rq_all, iou_all, class_names):
 
 # ── Main ───────────────────────────────────────────────────────────────────
 def main():
+    """Run the comprehensive 5-mode panoptic evaluation pipeline.
+
+    This is the top-level entry point that evaluates a panoptic model across
+    linear, token, ensemble (alpha sweep), token open-vocabulary, and backbone
+    pooling modes in a single pass over the validation set.
+
+    Steps:
+        1. Parses CLI arguments, loads config, and sets up output directory with logging.
+        2. Loads dataset, backbone, decoder (auto-detecting token head), and prototypes.
+        3. Filters requested modes based on model capabilities.
+        4. Iterates over all validation samples, running applicable inference modes.
+        5. Collects and prints per-mode results tables and summary comparison.
+        6. Reports novel class detection statistics for open-vocabulary modes.
+        7. Saves results.json and novel_detections.json to the output directory.
+
+    Returns:
+        None
+    """
     parser = argparse.ArgumentParser(description="Comprehensive panoptic evaluation (5 modes)")
     parser.add_argument("--config", required=True)
     parser.add_argument("--checkpoint", required=True)

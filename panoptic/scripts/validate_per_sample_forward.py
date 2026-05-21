@@ -26,6 +26,22 @@ def make_cfg():
 
 
 def main():
+    """Validate the DisNet forward pass on a single nuScenes LiDAR keyframe sample.
+
+    Used as a Phase 0.3 integration test to confirm that the pretrained DisNet backbone
+    produces correct 768-d CLIP-aligned features from raw per-keyframe LiDAR input.
+
+    Steps:
+        1. Loads one LIDAR_TOP sweep from nuScenes mini, applies range filtering.
+        2. Voxelizes the point cloud at VOXEL_SIZE resolution and builds a MinkowskiEngine
+           SparseTensor with batch-index column prepended.
+        3. Loads the DisNet model with pretrained weights (strict loading).
+        4. Runs a forward pass and validates output shape (V, 768), absence of NaN/Inf,
+           and reports norm statistics and inference latency.
+
+    Returns:
+        None: Prints diagnostics and raises AssertionError on failure.
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 

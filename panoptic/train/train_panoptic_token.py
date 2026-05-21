@@ -49,6 +49,24 @@ except ImportError:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def load_config(config_path, cli_overrides=None):
+    """Load YAML configuration file and apply flat CLI key=value overrides.
+
+    Called at the start of main() to build the full config dictionary that
+    controls all aspects of training, model architecture, and logging.
+
+    Steps:
+        1. Reads and parses the YAML file at config_path.
+        2. Iterates over CLI overrides (e.g., "--training.lr=1e-4").
+        3. Navigates nested dict using dot-separated keys.
+        4. Auto-casts override values to match existing types (bool/int/float/str).
+
+    Args:
+        config_path (str): Path to the YAML configuration file.
+        cli_overrides (list[str] | None): List of "key=value" strings for overrides.
+
+    Returns:
+        dict: Fully resolved configuration dictionary.
+    """
     with open(config_path, "r") as f:
         cfg = yaml.safe_load(f)
     if cli_overrides:
@@ -72,6 +90,20 @@ def load_config(config_path, cli_overrides=None):
 
 
 def parse_args():
+    """Parse command-line arguments for the panoptic token head training script.
+
+    Called at the entry point of main() to retrieve the config path and
+    any flat CLI overrides for YAML config modification at runtime.
+
+    Steps:
+        1. Creates an ArgumentParser with --config and --resume flags.
+        2. Uses parse_known_args to capture extra key=value overrides.
+        3. Returns the known namespace and list of unparsed overrides.
+
+    Returns:
+        tuple: (argparse.Namespace, list[str]) with .config, .resume fields
+            and unparsed CLI overrides like ["--training.lr=1e-4"].
+    """
     p = argparse.ArgumentParser(description="Panoptic token head training")
     p.add_argument("--config", default="panoptic/configs/mini_token.yaml")
     p.add_argument("--resume", default=None)
@@ -80,12 +112,38 @@ def parse_args():
 
 
 def set_seed(seed):
+    """Set random seeds across all libraries for reproducible token training runs.
+
+    Called early in main() before any stochastic operations to ensure deterministic
+    model initialization, data shuffling, and augmentation behavior.
+
+    Steps:
+        1. Sets PyTorch CPU seed via torch.manual_seed.
+        2. Sets all CUDA device seeds via torch.cuda.manual_seed_all.
+        3. Sets NumPy global random seed for data augmentation reproducibility.
+
+    Args:
+        seed (int): The base random seed, typically offset by rank in multi-GPU.
+    """
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
 
 
 def setup_distributed():
+    """Auto-detect DDP from torchrun env vars, backward-compatible with single-GPU.
+
+    Called once at training start to configure the distributed backend or fall
+    back to single-GPU mode when WORLD_SIZE is 1 or unset.
+
+    Steps:
+        1. Reads WORLD_SIZE env var to determine if multi-GPU.
+        2. If multi-GPU: inits NCCL process group, sets CUDA device by LOCAL_RANK.
+        3. If single-GPU: selects cuda if available, else cpu.
+
+    Returns:
+        tuple: (local_rank, rank, world_size, is_distributed, device).
+    """
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     if world_size > 1:
         local_rank = int(os.environ["LOCAL_RANK"])
@@ -100,6 +158,23 @@ def setup_distributed():
 
 
 def load_backbone(ckpt_path, device):
+    """Load the pretrained DisNet 3D backbone and freeze all parameters.
+
+    Used once during initialization to provide frozen feature extraction.
+    The backbone weights are never updated during token head training.
+
+    Steps:
+        1. Instantiates DisNet with MinkUNet18A architecture and openseg features.
+        2. Loads checkpoint, stripping DDP 'module.' prefixes from state dict keys.
+        3. Sets model to eval mode and disables gradients on all parameters.
+
+    Args:
+        ckpt_path (str): Path to DisNet checkpoint with 'state_dict' key.
+        device (torch.device): Target device for the model.
+
+    Returns:
+        DisNet: Frozen backbone model in eval mode.
+    """
     class Cfg:
         feature_2d_extractor = "openseg"
         arch_3d = "MinkUNet18A"
@@ -115,6 +190,24 @@ def load_backbone(ckpt_path, device):
 
 
 def extract_backbone_features(backbone, batch, device):
+    """Run frozen backbone on voxelized point cloud to extract per-voxel features.
+
+    Called every training/eval step to produce feature tensors consumed by the
+    panoptic decoder with token head.
+
+    Steps:
+        1. Prepends batch-index column to voxel coordinates for MinkowskiEngine.
+        2. Constructs SparseTensor and runs backbone in no_grad mode.
+        3. Unsqueezes results to add batch dimension (1, V, D).
+
+    Args:
+        backbone (DisNet): Frozen backbone in eval mode.
+        batch (dict): Sample dict with 'vox_coords' (V, 3) and 'vox_feats' (V, C).
+        device (torch.device): Computation device.
+
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]: (feats, coords) both with batch dim.
+    """
     vox_coords = batch["vox_coords"]
     vox_feats = batch["vox_feats"]
     V = vox_coords.shape[0]
@@ -132,13 +225,51 @@ def extract_backbone_features(backbone, batch, device):
 
 
 class CosineWarmupScheduler(torch.optim.lr_scheduler._LRScheduler):
+    """Linear warmup followed by cosine annealing decay to a minimum LR.
+
+    Used as per-step scheduler in token training for smooth LR ramp-up
+    to avoid destabilizing the freshly initialized token head, followed
+    by cosine decay for fine convergence.
+
+    Steps:
+        1. Warmup phase: linearly scales LR from 0 to base_lr.
+        2. Decay phase: cosine anneals from base_lr to min_lr.
+    """
+
     def __init__(self, optimizer, warmup_steps, total_steps, min_lr=1e-6, last_epoch=-1):
+        """Initialize cosine warmup scheduler with phase boundaries and minimum LR.
+
+        Stores scheduling parameters and delegates to parent class which
+        triggers initial get_lr() computation.
+
+        Steps:
+            1. Records warmup_steps, total_steps, min_lr.
+            2. Calls super().__init__ to register base_lrs and set last_epoch.
+
+        Args:
+            optimizer (torch.optim.Optimizer): Wrapped optimizer.
+            warmup_steps (int): Steps for linear warmup phase.
+            total_steps (int): Total steps including warmup and decay.
+            min_lr (float): Floor learning rate at end of cosine decay.
+            last_epoch (int): Last epoch index for resuming. Default -1.
+        """
         self.warmup_steps = warmup_steps
         self.total_steps = total_steps
         self.min_lr = min_lr
         super().__init__(optimizer, last_epoch)
 
     def get_lr(self):
+        """Compute per-group learning rates based on current step in warmup/decay schedule.
+
+        Called internally on each scheduler.step() to determine LR values.
+
+        Steps:
+            1. If step < warmup_steps: linear scale = step / warmup_steps.
+            2. Otherwise: cosine decay from base_lr to min_lr over remaining steps.
+
+        Returns:
+            list[float]: Learning rate for each optimizer param group.
+        """
         step = self.last_epoch
         if step < self.warmup_steps:
             scale = step / max(self.warmup_steps, 1)
@@ -154,6 +285,24 @@ class CosineWarmupScheduler(torch.optim.lr_scheduler._LRScheduler):
 
 
 def build_scheduler(optimizer, cfg, steps_per_epoch):
+    """Factory to construct the appropriate LR scheduler from YAML config.
+
+    Supports cosine_warmup (per-step) and cosine_annealing (per-epoch) types.
+    Called once during training setup after optimizer creation.
+
+    Steps:
+        1. Reads scheduler type from cfg["training"]["scheduler"].
+        2. Instantiates the corresponding scheduler with config parameters.
+        3. Returns the scheduler and its stepping granularity string.
+
+    Args:
+        optimizer (torch.optim.Optimizer): The optimizer to schedule.
+        cfg (dict): Full YAML config with training parameters.
+        steps_per_epoch (int): Optimizer steps per epoch (post grad accumulation).
+
+    Returns:
+        tuple: (scheduler, step_per) where step_per is "step" or "epoch".
+    """
     sched_type = cfg["training"]["scheduler"]
     if sched_type == "cosine_warmup":
         warmup_steps = cfg["training"]["warmup_epochs"] * steps_per_epoch
@@ -177,6 +326,26 @@ def build_scheduler(optimizer, cfg, steps_per_epoch):
 
 
 def panoptic_inference(pred_logits, pred_masks, num_classes=16, overlap_thr=0.8):
+    """Perform greedy panoptic assignment from linear classification head predictions.
+
+    Used during evaluation as the baseline (non-token) inference path. Converts
+    per-query logits and masks into voxel-level semantic and instance maps.
+
+    Steps:
+        1. Softmax on logits to get scores; filters no-object class queries.
+        2. Sorts queries by confidence descending.
+        3. Binarizes masks at 0.5; skips if overlap with assigned voxels exceeds threshold.
+        4. Assigns semantic + instance IDs (unique per thing, shared per stuff class).
+
+    Args:
+        pred_logits (torch.Tensor): Shape (Q, num_classes+1) classification logits.
+        pred_masks (torch.Tensor): Shape (V, Q) per-voxel mask logits.
+        num_classes (int): Number of valid classes (no-object index).
+        overlap_thr (float): Minimum unoccupied fraction to accept a mask.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: (sem_pred, inst_pred) both shape (V,) int64.
+    """
     scores, labels = pred_logits.softmax(-1).max(-1)
     masks = pred_masks.sigmoid()
     V = masks.shape[0]
@@ -282,6 +451,31 @@ def panoptic_inference_token(pred_tokens, pred_masks, text_prototypes, num_class
 
 
 def evaluate(decoder, backbone, dataloader, device, cfg, text_prototypes=None):
+    """Run dual-path validation: linear head PQ and token-based open-vocab PQ.
+
+    Called periodically during training on rank 0 to assess both the standard
+    linear classification head and the CLIP token head (if text_prototypes provided).
+
+    Steps:
+        1. Sets decoder to eval; initializes two PanopticEval accumulators.
+        2. For each val sample: extracts features, runs decoder, applies linear inference.
+        3. If text_prototypes given and pred_tokens available: also runs token inference.
+        4. Accumulates both evaluators, computes PQ/SQ/RQ/mIoU for each path.
+        5. Returns combined metrics dict with token metrics prefixed by '_token'.
+
+    Args:
+        decoder (PanopticDecoder): Unwrapped decoder model.
+        backbone (DisNet): Frozen backbone for feature extraction.
+        dataloader (DataLoader): Validation dataloader (batch_size=1).
+        device (torch.device): Computation device.
+        cfg (dict): Config with model.num_classes and inference settings.
+        text_prototypes (torch.Tensor | None): CLIP text embeddings (num_classes, dim)
+            for token-based inference. None disables token evaluation.
+
+    Returns:
+        dict: Metrics with keys PQ, SQ, RQ, mIoU and optionally PQ_token,
+            SQ_token, RQ_token, mIoU_token (all float).
+    """
     num_classes = cfg["model"]["num_classes"]
     overlap_thr = cfg["inference"]["overlap_thr"]
     decoder.eval()
@@ -343,17 +537,72 @@ def evaluate(decoder, backbone, dataloader, device, cfg, text_prototypes=None):
 
 
 class GracefulKiller:
+    """Catches SIGTERM/SIGUSR1 from HPC schedulers and flags for graceful checkpoint save.
+
+    Instantiated at training start to allow saving state before process termination.
+    The training loop polls kill_now each step and saves interrupted.pth if set.
+
+    Steps:
+        1. Registers signal handlers on init.
+        2. Sets kill_now=True when signal arrives.
+        3. Training loop checks flag and saves before exit.
+    """
+
     def __init__(self):
+        """Register OS signal handlers for SIGTERM and SIGUSR1.
+
+        Called once at training start to install graceful shutdown hooks
+        for HPC job scheduler pre-emption signals.
+
+        Steps:
+            1. Initializes kill_now = False.
+            2. Registers _handler for SIGTERM and SIGUSR1.
+        """
         self.kill_now = False
         signal.signal(signal.SIGTERM, self._handler)
         signal.signal(signal.SIGUSR1, self._handler)
 
     def _handler(self, signum, frame):
+        """Handle OS signal by setting kill flag for graceful training interruption.
+
+        Invoked by the OS on SIGTERM/SIGUSR1. Prints the signal name and sets
+        the flag that the training loop polls.
+
+        Steps:
+            1. Prints signal name for logging.
+            2. Sets self.kill_now = True.
+
+        Args:
+            signum (int): Signal number received.
+            frame (frame): Current stack frame (unused, required by signal API).
+        """
         print(f"\n[SIGNAL] Received {signal.Signals(signum).name}. Saving checkpoint and exiting...", flush=True)
         self.kill_now = True
 
 
 def save_checkpoint(path, epoch, decoder, optimizer, scheduler, scaler, best_pq, cfg, metrics=None):
+    """Serialize full training state to disk for resumption or deployment.
+
+    Called on best PQ improvement, every save_every epochs, and on graceful
+    SIGTERM shutdown to enable seamless training continuation.
+
+    Steps:
+        1. Extracts decoder state_dict (unwraps DDP .module if present).
+        2. Bundles epoch, optimizer, scheduler, best_pq, config into dict.
+        3. Includes AMP scaler and metrics if available.
+        4. Saves via torch.save to the specified path.
+
+    Args:
+        path (str): Destination .pth file path.
+        epoch (int): Current epoch (0-indexed).
+        decoder (nn.Module): Decoder model (may be DDP-wrapped).
+        optimizer (torch.optim.Optimizer): Current optimizer state.
+        scheduler (_LRScheduler): Current scheduler state.
+        scaler (GradScaler | None): AMP scaler or None.
+        best_pq (float): Best PQ achieved so far.
+        cfg (dict): Full YAML config for reproducibility.
+        metrics (dict | None): Optional validation metrics.
+    """
     state = {
         "epoch": epoch,
         "decoder": decoder.module.state_dict() if hasattr(decoder, "module") else decoder.state_dict(),
@@ -370,6 +619,24 @@ def save_checkpoint(path, epoch, decoder, optimizer, scheduler, scaler, best_pq,
 
 
 def find_resume_path(cfg, cli_resume):
+    """Determine checkpoint path to resume token training from.
+
+    Checks CLI override first, then config resume path, then auto-detects
+    latest.pth in the save directory if auto_resume is enabled.
+
+    Steps:
+        1. If cli_resume provided and file exists, returns it.
+        2. If config checkpoint.resume set and exists, returns it.
+        3. If auto_resume enabled, checks for latest.pth in save_dir.
+
+    Args:
+        cfg (dict): Full config with checkpoint.resume, checkpoint.auto_resume,
+            and checkpoint.save_dir fields.
+        cli_resume (str | None): CLI-provided resume path override.
+
+    Returns:
+        str | None: Path to resume checkpoint, or None if not found.
+    """
     if cli_resume is not None:
         return cli_resume if os.path.isfile(cli_resume) else None
     if cfg["checkpoint"]["resume"] is not None:
@@ -382,6 +649,22 @@ def find_resume_path(cfg, cli_resume):
 
 
 def init_wandb(cfg):
+    """Initialize Weights & Biases for experiment tracking if available and enabled.
+
+    Called once on rank 0 at training start. No-ops if wandb is not installed
+    or logging.wandb_enabled is False.
+
+    Steps:
+        1. Checks HAS_WANDB and config enable flag.
+        2. Calls wandb.init with project/entity/name from config.
+        3. Sets resume="allow" for run continuation after preemption.
+
+    Args:
+        cfg (dict): Config with logging.wandb_project/entity/run_name/wandb_enabled.
+
+    Returns:
+        bool: True if wandb initialized successfully, False otherwise.
+    """
     if not HAS_WANDB or not cfg["logging"]["wandb_enabled"]:
         return False
     wandb.init(
@@ -395,6 +678,19 @@ def init_wandb(cfg):
 
 
 def log_wandb(data, step=None):
+    """Log metrics dictionary to the active WandB run if available.
+
+    Called throughout training for loss, LR, temperature, and eval metrics.
+    Silently no-ops if wandb is not active.
+
+    Steps:
+        1. Checks wandb is imported and run is active.
+        2. Calls wandb.log with data and optional step.
+
+    Args:
+        data (dict): Key-value metric pairs to log.
+        step (int | None): Optional global step for x-axis alignment.
+    """
     if HAS_WANDB and wandb.run is not None:
         wandb.log(data, step=step)
 
@@ -413,6 +709,22 @@ def log_wandb_artifact(path, name, artifact_type="model", metadata=None):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    """Execute the Phase 5 token head training pipeline with CLIP alignment loss.
+
+    Extends the base panoptic training with a CLIP token head that projects decoder
+    queries into CLIP embedding space, enabling open-vocabulary panoptic segmentation.
+
+    Steps:
+        1. Parses args, loads config, sets up distributed/seed/signals/wandb.
+        2. Loads NuScenes datasets and creates train/val dataloaders.
+        3. Builds backbone + decoder (with token_head=True) and warm-starts from Phase 4.
+        4. Loads CLIP text prototypes and initializes CLIPTokenLoss with learnable temperature.
+        5. Creates optimizer with differential LR (lower for pretrained, higher for token head).
+        6. Training loop: panoptic loss + token loss with warmup weight schedule.
+        7. Optionally applies aux token loss on intermediate decoder layer outputs.
+        8. Evaluates both linear and token-based PQ; saves best/latest checkpoints.
+        9. Handles graceful SIGTERM shutdown and DDP synchronization.
+    """
     args, cli_overrides = parse_args()
     cfg = load_config(args.config, cli_overrides)
 

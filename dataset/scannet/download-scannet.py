@@ -29,6 +29,25 @@ V1_IDX = 1
 
 
 def get_release_scans(release_file):
+    """Fetch the list of scan IDs from a remote release manifest file.
+
+    Called early in ``main`` to retrieve the full set of scan identifiers for
+    the chosen ScanNet release (v1 or v2), as well as the test-set scans.
+    The manifest is a plain-text file hosted on the ScanNet server with one
+    scan ID per line.
+
+    Steps:
+        1. Open the remote URL specified by ``release_file`` via urllib.
+        2. Read each line, decode from bytes to UTF-8, and strip the newline.
+        3. Append the cleaned scan ID to the result list.
+
+    Args:
+        release_file (str): Full URL pointing to the release manifest text
+            file (e.g., ``BASE_URL + 'v2/scans.txt'``).
+
+    Returns:
+        list[str]: A list of scan ID strings, e.g. ``['scene0000_00', ...]``.
+    """
     scan_lines = urllib.request.urlopen(release_file)
     # scan_lines = urllib.urlopen(release_file)
     scans = []
@@ -39,6 +58,33 @@ def get_release_scans(release_file):
 
 
 def download_release(release_scans, out_dir, file_types, use_v1_sens):
+    """Download all scans in a ScanNet release to a local directory.
+
+    Called by ``main`` when the user requests the full dataset download
+    (no ``--id`` flag). It iterates over every scan ID in the release
+    manifest and delegates to ``download_scan`` for the actual per-file
+    retrieval.
+
+    Steps:
+        1. Return immediately if ``release_scans`` is empty.
+        2. Print a status message indicating the release version and output
+           directory.
+        3. For each scan ID, construct its output sub-directory and call
+           ``download_scan`` with the requested file types.
+        4. Print a completion message.
+
+    Args:
+        release_scans (list[str]): List of scan IDs to download.
+        out_dir (str): Local root directory where scan sub-directories will
+            be created.
+        file_types (list[str]): File-type suffixes to download per scan
+            (e.g., ``['.sens', '_vh_clean.ply']``).
+        use_v1_sens (bool): If True, fetch ``.sens`` files from the v1
+            release path instead of v2.
+
+    Returns:
+        None
+    """
     if len(release_scans) == 0:
         return
     print('Downloading ScanNet ' + RELEASE_NAME + ' release to ' + out_dir + '...')
@@ -49,6 +95,29 @@ def download_release(release_scans, out_dir, file_types, use_v1_sens):
 
 
 def download_file(url, out_file):
+    """Download a single file from a URL to a local path, with atomic rename.
+
+    This is the low-level download helper called by all other download
+    functions. It creates the parent directory if needed, skips files that
+    already exist, and uses a temporary file plus atomic rename to avoid
+    leaving partial downloads on disk.
+
+    Steps:
+        1. Derive the parent directory from ``out_file`` and create it if it
+           does not exist.
+        2. If ``out_file`` already exists, print a warning and skip.
+        3. Otherwise, create a temporary file in the same directory via
+           ``tempfile.mkstemp``, close the file descriptor, then download
+           the URL content into the temporary file with ``urllib.request.urlretrieve``.
+        4. Atomically rename the temporary file to ``out_file``.
+
+    Args:
+        url (str): The remote URL to download from.
+        out_file (str): The local file path where the download will be saved.
+
+    Returns:
+        None
+    """
     out_dir = os.path.dirname(out_file)
     if not os.path.isdir(out_dir):
         os.makedirs(out_dir)
@@ -64,6 +133,31 @@ def download_file(url, out_file):
         print('WARNING: skipping download of existing file ' + out_file)
 
 def download_scan(scan_id, out_dir, file_types, use_v1_sens):
+    """Download all requested file types for a single ScanNet scan.
+
+    Called by ``download_release`` for bulk downloads or directly by ``main``
+    when the user specifies ``--id``. For each file type, it constructs the
+    remote URL (using the v1 path for ``.sens`` when ``use_v1_sens`` is True)
+    and delegates to ``download_file``.
+
+    Steps:
+        1. Create the output directory if it does not exist.
+        2. Iterate over ``file_types``; for each suffix, determine whether to
+           use the v1 or v2 release path for the URL.
+        3. Call ``download_file(url, out_file)`` for each file.
+        4. Print a completion message for the scan.
+
+    Args:
+        scan_id (str): The scan identifier, e.g. ``'scene0000_00'``.
+        out_dir (str): Local directory where the scan files will be saved.
+        file_types (list[str]): File-type suffixes to download
+            (e.g., ``['.sens', '_vh_clean_2.ply']``).
+        use_v1_sens (bool): If True, download ``.sens`` files from the v1
+            release URL instead of the current release.
+
+    Returns:
+        None
+    """
     print('Downloading ScanNet ' + RELEASE_NAME + ' scan ' + scan_id + ' ...')
     if not os.path.isdir(out_dir):
         os.makedirs(out_dir)
@@ -76,6 +170,25 @@ def download_scan(scan_id, out_dir, file_types, use_v1_sens):
 
 
 def download_task_data(out_dir):
+    """Download ScanNet v1 task data including label maps and trained models.
+
+    Called by ``main`` when the ``--task_data`` flag is set. It retrieves the
+    v1 label mapping file, object classification data and models, and voxel
+    labeling data and models from the ScanNet server.
+
+    Steps:
+        1. Build the list of task-related file paths (label map, classification
+           data/models, voxel labeling data/models).
+        2. For each file, construct the remote URL from the v1 tasks base path.
+        3. Create local directories as needed and call ``download_file``.
+        4. Print completion status.
+
+    Args:
+        out_dir (str): Local root directory for task data downloads.
+
+    Returns:
+        None
+    """
     print('Downloading ScanNet v1 task data...')
     files = [
         LABEL_MAP_FILES[V1_IDX], 'obj_classification/data.zip',
@@ -92,6 +205,28 @@ def download_task_data(out_dir):
     print('Downloaded task data.')
 
 def download_tfrecords(in_dir, out_dir):
+    """Download Google TensorFlow records for 3D semantic segmentation/detection.
+
+    Called by ``main`` when the ``--tf_semantic`` flag is set. The records are
+    split into high-resolution and low-resolution variants, each sharded
+    across train, val, and test splits. Total size is approximately 302 GB.
+
+    Steps:
+        1. Create the output root directory if it does not exist.
+        2. For each resolution folder (``hires_tfrecords``, ``lores_tfrecords``),
+           create the corresponding local directory.
+        3. For each split (train/val/test) and shard index, construct the
+           remote URL and local path, then call ``download_file``.
+
+    Args:
+        in_dir (str): Remote base directory URL containing the tfrecord
+            folders (e.g., ``BASE_URL + 'v2/tasks/tf3d'``).
+        out_dir (str): Local directory where tfrecord folders and files
+            will be saved.
+
+    Returns:
+        None
+    """
     print('Downloading tf records (302 GB)...')
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
@@ -110,6 +245,25 @@ def download_tfrecords(in_dir, out_dir):
                 download_file(url, localpath)
 
 def download_label_map(out_dir):
+    """Download the ScanNet label mapping TSV file for the active release.
+
+    Called by ``main`` when the ``--label_map`` flag is set, or automatically
+    as part of a full v2 dataset download. The label map file maps raw
+    ScanNet annotation labels to NYU40 and other label sets.
+
+    Steps:
+        1. Print a status message with the release version.
+        2. Construct the remote URL from the tasks base path and the global
+           ``LABEL_MAP_FILE`` name.
+        3. Create the local directory if needed and call ``download_file``.
+        4. Print a completion message.
+
+    Args:
+        out_dir (str): Local directory where the label map file will be saved.
+
+    Returns:
+        None
+    """
     print('Downloading ScanNet ' + RELEASE_NAME + ' label mapping file...')
     files = [ LABEL_MAP_FILE ]
     for file in files:
@@ -123,6 +277,32 @@ def download_label_map(out_dir):
 
 
 def main():
+    """Parse CLI arguments and orchestrate the ScanNet data download workflow.
+
+    This is the entry point of the script, invoked when run from the command
+    line. It supports downloading the full release, individual scans, specific
+    file types, task data, label maps, preprocessed frames, 2D test frames,
+    data-efficient task files, TensorFlow records, and GRIT files.
+
+    Steps:
+        1. Parse command-line arguments (output directory, flags for various
+           download modes, optional scan ID and file type filters).
+        2. If ``--v1`` is set, switch global release variables to v1 paths.
+        3. Fetch the release and test-release scan manifests via
+           ``get_release_scans``.
+        4. Dispatch to the appropriate download function based on the flags:
+           ``--task_data``, ``--label_map``, ``--preprocessed_frames``,
+           ``--test_frames_2d``, ``--data_efficient``, ``--tf_semantic``,
+           ``--grit``, ``--id``, or a full release download.
+        5. For a full release download, also retrieve label maps, test scans,
+           test frames, and data-efficient files (v2 only).
+
+    Args:
+        None (reads from ``sys.argv`` via ``argparse``).
+
+    Returns:
+        None
+    """
     parser = argparse.ArgumentParser(description='Downloads ScanNet public data release.')
     parser.add_argument('-o', '--out_dir', required=True, help='directory in which to download')
     parser.add_argument('--task_data', action='store_true', help='download task data (v1)')

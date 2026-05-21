@@ -24,6 +24,43 @@ class FusedFeatureLoader(Point3DLoader):
                  identifier=7791, loop=1, eval_all=False,
                  input_color = False,
                  ):
+        """Initialize the fused-feature dataset by extending Point3DLoader with
+        per-scene feature paths and precomputed occurrence counts.
+
+        Called once when building the training or evaluation DataLoader for the
+        distillation pipeline, where each 3-D point cloud is paired with fused
+        2-D-to-3-D feature vectors stored as ``.pt`` files.
+
+        Steps:
+            1. Call ``Point3DLoader.__init__`` to set up ``.pth`` paths,
+               voxelizer, augmentations, and optional shared-memory caching.
+            2. Store ``datapath_prefix_feat`` for locating feature files.
+            3. For non-nuScenes datasets, glob ``<scene_name>_*.pt`` files for
+               every scene to count how many feature variants (occurrences)
+               exist (typically 5 for ScanNet/Matterport training, 1 for eval).
+            4. Filter out scenes that have zero matching feature files (can
+               happen with Matterport) so they are never sampled.
+
+        Args:
+            datapath_prefix (str): Root directory for raw 3-D point-cloud
+                ``.pth`` files, forwarded to ``Point3DLoader``.
+            datapath_prefix_feat (str): Directory containing fused feature
+                ``.pt`` files named ``<scene_name>_<idx>.pt``.
+            voxel_size (float): Voxel edge length in metres, forwarded to
+                ``Point3DLoader``.
+            split (str): Dataset split (``'train'``, ``'val'``, ``'test'``).
+            aug (bool): Enable geometric and chromatic augmentation.
+            memcache_init (bool): Cache raw points in POSIX shared memory.
+            identifier (int): Unique ID for shared-memory segment names.
+            loop (int): Epoch-length multiplier forwarded to ``Point3DLoader``.
+            eval_all (bool): If True, return full-resolution labels and
+                reconstruction indices for evaluation.
+            input_color (bool): If True, use real point colours as input
+                features; otherwise use all-ones.
+
+        Returns:
+            None
+        """
         super().__init__(datapath_prefix=datapath_prefix, voxel_size=voxel_size,
                                            split=split, aug=aug, memcache_init=memcache_init,
                                            identifier=identifier, loop=loop,
@@ -63,7 +100,48 @@ class FusedFeatureLoader(Point3DLoader):
             raise Exception('0 file is loaded in the feature loader.')
 
     def __getitem__(self, index_long):
+        """Load a 3-D point cloud together with its fused 2-D-to-3-D feature
+        vectors, apply voxelization, and return aligned sparse-voxel tensors
+        plus the per-voxel feature chunk and visibility mask.
 
+        Called by the PyTorch DataLoader during distillation training or
+        evaluation. A random feature-occurrence variant is selected for
+        training; occurrence 0 is used when only one variant exists.
+
+        Steps:
+            1. Load (locs, feats, labels) from shared memory or disk.
+            2. Derive the scene name and load the corresponding ``.pt`` feature
+               file (randomly picking among available occurrences for training).
+            3. Parse the feature dict: extract ``feat`` and ``mask_full``, and
+               optionally ``mask`` for legacy formats. For val/test, expand
+               compressed features back to full point-cloud size.
+            4. Squeeze any trailing singleton dimension from ``feat_3d``.
+            5. Apply optional elastic-distortion pre-voxel transform.
+            6. Voxelize points. For training, build index mappings so that
+               ``feat_3d`` contains only the features corresponding to the
+               surviving voxels (handling both merged-mask and legacy formats).
+               For eval, voxelize only the visible (masked) subset.
+            7. Apply chromatic/flip augmentation if enabled.
+            8. Prepend batch-index column to coordinates and convert to tensors.
+
+        Args:
+            index_long (int): Sample index from the DataLoader sampler; wrapped
+                via modulo for ``loop > 1``.
+
+        Returns:
+            tuple: When ``eval_all`` is False:
+                - coords (torch.IntTensor): ``(N_vox, 4)`` with columns
+                  ``(batch_idx, x, y, z)``.
+                - feats (torch.FloatTensor): ``(N_vox, 3)`` colour or ones.
+                - labels (torch.LongTensor): ``(N_vox,)`` semantic labels.
+                - feat_3d (torch.Tensor): ``(N_vox_visible, C)`` fused CLIP /
+                  OpenSeg features for the visible voxels.
+                - mask (torch.BoolTensor): ``(N_vox,)`` True where a voxel has
+                  a valid fused feature.
+            tuple: When ``eval_all`` is True the above plus:
+                - inds_reconstruct (torch.LongTensor): ``(N_pts_visible,)``
+                  mapping from original visible points to voxel indices.
+        """
         index = index_long % len(self.data_paths)
         t_start = time.time()
 
