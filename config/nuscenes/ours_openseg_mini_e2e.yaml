@@ -1,0 +1,55 @@
+DATA:
+  data_root: data/nuscenes_3d
+  data_root_2d_fused_feature: data/nuscenes_multiview_openseg
+  feature_2d_extractor: openseg
+  classes: 16
+  aug: False
+  voxel_size: 0.05
+  input_color: False
+  use_shm: False
+
+DISTILL:
+  arch_3d: MinkUNet18A
+  ignore_label: 255
+  train_gpu: [0]
+  workers: 0
+  batch_size: 1
+  batch_size_val: 1
+  base_lr: 0.00001                   # 10x lower LR for fine-tuning pretrained encoder
+  loss_type: cosine
+  loop: 5
+  epochs: 10                         # more epochs to observe fine-tuning effect
+  start_epoch: 0
+  power: 0.9
+  momentum: 0.9
+  manual_seed: 3407
+  print_freq: 1
+  save_freq: 1
+  save_path: exp/mini_e2e_finetune
+  resume: models/nuscenes_openseg.pth.tar   # warm start from pretrained
+  evaluate: True
+  eval_freq: 1
+
+TEST:
+  split: val
+  prompt_eng: True
+  mark_no_feature_to_unknown: True
+  feature_type: 'distill'
+  save_feature_as_numpy: False
+  map_nuscenes_details: True
+  vis_input: False
+  vis_pred: True
+  vis_gt: True
+  test_workers: 0
+  test_gpu: [0]
+  test_batch_size: 1
+  test_repeats: 1
+  model_path:
+  save_folder: exp/mini_e2e_finetune/eval
+
+Distributed:
+  dist_url: tcp://127.0.0.1:6789
+  dist_backend: 'nccl'
+  multiprocessing_distributed: False
+  world_size: 1
+  rank: 0
