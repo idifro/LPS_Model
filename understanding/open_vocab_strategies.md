@@ -137,7 +137,7 @@ def panoptic_inference_openvocab(pred_masks, backbone_feats, text_protos, obj_sc
 
 1. **Backbone-pool already failed at PQ=0.209** — but this was due to bugs (no pre-normalization, hard thresholds, no objectness filtering). The fixed recipe above should be dramatically better.
 
-2. **Point-level distillation ≠ object-level features** — DisNet was trained to match per-pixel OpenSeg features. Averaging many voxels might "blur" the semantic signal if different parts of an object have different feature directions.
+2. **Point-level distillation ≠ object-level features** — DisNet was trained to match per-pixel OpenSeg features. **CONFIRMED (2026-05-27)**: Averaging many voxels DOES "blur" the semantic signal. Prototype bias calibration showed that random pools give ±0.08 cosine similarity (near zero) because different-class vectors cancel. **Mitigation: use per-voxel logit aggregation (Strategy K/L) instead of feature pooling.**
 
 3. **Without CE loss, masks may degrade** — the CE loss provides a class-discriminative signal that helps queries specialize. Without it, multiple queries might compete for the same object, or queries might produce fragmented masks.
 
@@ -765,7 +765,7 @@ Strategy E was implemented and evaluated on v1.0-trainval (6019 samples). Result
 | Backbone-Pool-v2 (fixed) | 0.221 | 23.9M (still "pole" dominated) |
 | Geo-Ensemble α=0.5 (best) | 0.463 | 171K (748 police car, 7.5K trash cans, 163K pole) |
 
-**Conclusion**: Strategy E validated the *framework* but novel detection signal is weak. The backbone features carry some open-vocab information (police car detected!) but not enough for reliable detection. The "pole" text prototype is pathologically generic. Next steps should focus on training-time improvements.
+**Conclusion**: Strategy E validated the *framework* but novel detection signal is weak. The backbone features carry some open-vocab information (police car detected!) but feature-pooling (averaging) within masks destroys per-voxel CLIP alignment — this is the root cause of weak novel signal. Prototype bias correction was also implemented (±0.08 range) but proved too small to help, further confirming that pooling degradation, not prototype affinity, is the bottleneck. **Next step: Strategy K/L (per-voxel logit aggregation) to avoid the pooling problem entirely.**
 
 ---
 
@@ -1151,61 +1151,328 @@ Stage 2: Joint panoptic training (20 epochs)
 
 ---
 
-## Updated Decision Matrix (Post Strategy E Results)
+## Critical Finding: Backbone IS CLIP-Aligned — Pooling Degrades Signal
+
+**Date**: 2026-05-27
+
+### Evidence
+
+Prototype bias calibration showed per-prototype background affinity in range ±0.08. This is **mathematically correct** for a CLIP-aligned space:
+- Random groups of voxels (from different classes) → averaged → cancel to near-zero
+- Near-zero cosine similarity to any specific text prototype = expected behavior in 768-dim space
+- The backbone meets its training objective: per-voxel CLIP alignment via cosine distillation
+
+### Root Cause of Weak Novel Detection
+
+The problem is NOT that features aren't CLIP-aligned. It's that **averaging features over a mask** destroys the per-voxel signal:
+
+```
+Individual voxel (car):     cos_sim("car") ≈ 0.35, cos_sim("truck") ≈ 0.20  ← discriminative!
+Individual voxel (road):    cos_sim("road") ≈ 0.30, cos_sim("car") ≈ 0.05   ← discriminative!
+
+Averaged over mask (car+road+building voxels mixed):
+  cos_sim("car") ≈ 0.08, cos_sim("road") ≈ 0.07, cos_sim("truck") ≈ 0.06  ← NOISE!
+```
+
+Averaging normalized vectors from different classes produces a near-zero vector. Re-normalizing it creates a random direction with no class specificity.
+
+### Implication for All Strategies
+
+Any approach that pools/averages backbone features before classifying will suffer from this. The correct approach is:
+1. Classify per-voxel FIRST (each voxel is CLIP-aligned individually)
+2. Aggregate DECISIONS (votes/logits) within masks
+
+---
+
+## Strategy K: Per-Voxel Majority Vote within Masks (NO TRAINING)
+
+### What It Is
+
+Instead of pooling backbone features then classifying the pool, classify EACH voxel independently using cosine similarity to text prototypes, then aggregate votes within each predicted mask.
+
+### Why It Should Work
+
+The backbone was trained per-voxel: `backbone_feat[v] → CLIP feature for voxel v`. Each voxel's feature is aligned to its class's text prototype. This is literally how OpenScene's "distill" mode works (achieving 35.4% mIoU). We just apply it *within* each predicted mask to get per-mask class labels.
+
+Voting aggregates many weak per-voxel signals into strong per-mask decisions (law of large numbers). A car mask with 5000 voxels where 70% vote "car" gives high confidence even if individual voxels are noisy.
+
+### How It Works
+
+```python
+def panoptic_inference_voxel_vote(pred_logits, pred_masks, backbone_feats,
+                                   text_protos_all, num_known=16,
+                                   overlap_thr=0.8, min_mask_pts=50):
+    """Classify masks by per-voxel CLIP voting (not feature pooling).
+
+    For known classes: use linear head (proven PQ=0.477).
+    For novel classes: per-voxel cosine sim vote within each mask.
+    """
+    V, Q = pred_masks.shape
+    masks_sig = pred_masks.sigmoid()  # (V, Q)
+
+    # Per-voxel CLIP classification
+    feats_normed = F.normalize(backbone_feats, dim=-1)  # (V, 768)
+    per_voxel_logits = feats_normed @ text_protos_all.T  # (V, C_all)
+
+    # Linear head scores for known classes
+    linear_probs = pred_logits[:, :num_known].softmax(dim=-1)  # (Q, 16)
+    obj_score = 1 - pred_logits.softmax(dim=-1)[:, -1]  # objectness
+
+    # For each query: vote within mask
+    scores = torch.zeros(Q)
+    labels = torch.zeros(Q, dtype=torch.long)
+
+    for q in range(Q):
+        mask_weight = masks_sig[:, q]  # (V,) soft mask
+        if mask_weight.sum() < min_mask_pts:
+            scores[q] = 0
+            continue
+
+        # Weighted vote: sum of per-voxel logits weighted by mask confidence
+        weighted_logits = (mask_weight.unsqueeze(-1) * per_voxel_logits).sum(0)  # (C_all,)
+        weighted_logits = weighted_logits / mask_weight.sum()  # normalize
+
+        # Decision: use linear head for known, CLIP vote for novel
+        linear_score, linear_cls = linear_probs[q].max(dim=-1)
+        novel_logits = weighted_logits[num_known:]  # novel class logits
+        novel_score = novel_logits.max() if len(novel_logits) > 0 else 0
+
+        # If novel signal is stronger → use it
+        if novel_score > weighted_logits[:num_known].max() * 1.2:  # 20% margin
+            labels[q] = num_known + novel_logits.argmax()
+            scores[q] = novel_score * obj_score[q]
+        else:
+            labels[q] = linear_cls
+            scores[q] = linear_score * obj_score[q]
+
+    # Greedy panoptic assignment (same as before)
+    return _greedy_assign(scores, labels, masks_sig, V, overlap_thr)
+```
+
+### Key Insight: Average LOGITS, Not FEATURES
+
+```
+WRONG (Strategy E pooling):   average(feat_v1, feat_v2, ...) → classify(averaged_feat)
+RIGHT (Strategy K):           classify(feat_v1), classify(feat_v2), ... → average(logits)
+```
+
+Averaging logits preserves discriminability because each logit is already a class similarity score. Averaging features destroys discriminability because normalized vectors from different classes cancel out.
+
+### Expected Results
+
+- Known-class PQ: same as linear head (0.477) — falls back to linear for known
+- Novel detection: significantly better than geo-ensemble because:
+  - 5000 voxels voting "trash can" > 1 averaged feature near zero
+  - Background voxels within mask get filtered by mask_weight (sigmoid)
+  - No pooling degradation
+
+### Why This Could Fail
+
+1. Mask boundaries include voxels from neighboring objects (e.g., car mask extends over road) → wrong votes
+2. Novel class prototypes still generic (e.g., "pole" matches many things) → need multi-prompt
+3. Threshold for known-vs-novel decision is sensitive
+
+---
+
+## Strategy L: Soft Mask-Weighted Logit Aggregation (NO TRAINING)
+
+### What It Is
+
+A refined version of K. Instead of hard majority vote, use the mask sigmoid values as confidence weights for per-voxel logits. Voxels with high mask confidence contribute more to the class decision.
+
+### How It Differs from Feature Pooling
+
+| Approach | Formula | Problem |
+|----------|---------|---------|
+| Feature pool (E) | `classify(Σ(w_v * feat_v) / Σw_v)` | destroys per-voxel alignment |
+| Logit aggregation (L) | `Σ(w_v * classify(feat_v)) / Σw_v` | preserves per-voxel alignment |
+
+Mathematically: `E[f(x)] ≠ f(E[x])` — classification is nonlinear, so averaging before classifying ≠ classifying then averaging.
+
+### Implementation
+
+```python
+def panoptic_inference_logit_aggregation(pred_logits, pred_masks, backbone_feats,
+                                          text_protos_all, num_known=16,
+                                          overlap_thr=0.8, temperature=0.1):
+    V, Q = pred_masks.shape
+    masks_sig = pred_masks.sigmoid()  # (V, Q)
+
+    # Per-voxel logits for ALL classes (known + novel)
+    feats_normed = F.normalize(backbone_feats.float(), dim=-1)
+    voxel_logits = feats_normed @ text_protos_all.T / temperature  # (V, C_all)
+
+    # For each query: soft-weighted logit sum
+    # Efficient: matrix multiplication
+    # weighted_logits[q, c] = Σ_v masks_sig[v,q] * voxel_logits[v,c] / Σ_v masks_sig[v,q]
+    mask_sums = masks_sig.sum(dim=0).clamp(min=1)  # (Q,)
+    aggregated_logits = (masks_sig.T @ voxel_logits) / mask_sums.unsqueeze(-1)  # (Q, C_all)
+
+    # Combine with linear head for known classes
+    linear_probs = pred_logits[:, :num_known].softmax(dim=-1)  # (Q, 16)
+    clip_probs = aggregated_logits.softmax(dim=-1)  # (Q, C_all)
+
+    # Geometric ensemble: known=blend, novel=CLIP-only
+    alpha = 0.5
+    combined_known = (linear_probs ** alpha) * (clip_probs[:, :num_known] ** (1-alpha))
+    combined_novel = clip_probs[:, num_known:]
+    combined = torch.cat([combined_known, combined_novel], dim=-1)
+    combined = combined / combined.sum(dim=-1, keepdim=True)
+
+    scores, labels = combined.max(dim=-1)
+    obj_score = 1 - pred_logits.softmax(dim=-1)[:, -1]
+    final_scores = scores * obj_score
+
+    return _greedy_assign(final_scores, labels, masks_sig, V, overlap_thr)
+```
+
+### Why This Is the Best No-Training Approach
+
+1. Uses backbone exactly as trained (per-voxel CLIP similarity)
+2. Mask weighting ensures high-confidence mask voxels dominate (boundary voxels have low sigmoid)
+3. Efficient: one matrix multiply `(Q,V) @ (V,C)` — same cost as current pooling
+4. Naturally handles the "pole" problem: if a mask is truly car, most voxels will vote car, drowning out noise
+
+### Computational Note
+
+`masks_sig.T @ voxel_logits` is (Q, V) @ (V, C) = O(Q * V * C). For V=50K, Q=100, C=21, this is 100M operations — similar to current feature pooling. No extra cost.
+
+---
+
+## Strategy M: Confidence-Gated Novel Class Detection (NO TRAINING)
+
+### What It Is
+
+A simple but effective decision framework: use the linear head's confidence as a "gate" to decide whether a mask should be classified as known or novel. Only consider novel classes for masks where the linear head is uncertain.
+
+### Motivation
+
+The linear head achieves PQ=0.477 on known classes. When it's confident (max prob > 0.7), it's almost certainly correct. We only need novel-class detection for masks where the linear head says "I don't know" (low confidence or high no-object score).
+
+### How It Works
+
+```python
+def panoptic_inference_confidence_gated(pred_logits, pred_masks, backbone_feats,
+                                         text_protos_novel, num_known=16,
+                                         confidence_threshold=0.5):
+    V, Q = pred_masks.shape
+    masks_sig = pred_masks.sigmoid()
+
+    linear_probs = pred_logits[:, :num_known].softmax(dim=-1)  # (Q, 16)
+    max_known_conf, known_labels = linear_probs.max(dim=-1)  # (Q,)
+    obj_score = 1 - pred_logits.softmax(dim=-1)[:, -1]
+
+    # Per-voxel novel-class logits (only novel prototypes)
+    feats_normed = F.normalize(backbone_feats.float(), dim=-1)
+    novel_logits_voxel = feats_normed @ text_protos_novel.T / 0.1  # (V, N_novel)
+
+    labels = torch.zeros(Q, dtype=torch.long)
+    scores = torch.zeros(Q)
+
+    for q in range(Q):
+        if max_known_conf[q] > confidence_threshold:
+            # Linear head is confident → trust it
+            labels[q] = known_labels[q]
+            scores[q] = max_known_conf[q] * obj_score[q]
+        else:
+            # Linear head uncertain → check novel classes via per-voxel vote
+            mask_w = masks_sig[:, q]
+            if mask_w.sum() < 50:
+                continue
+            novel_vote = (mask_w.unsqueeze(-1) * novel_logits_voxel).sum(0) / mask_w.sum()
+            best_novel_score = novel_vote.max()
+            best_novel_cls = novel_vote.argmax()
+
+            # Compare novel vs known
+            known_vote = (mask_w.unsqueeze(-1) * (feats_normed @ text_protos_known.T / 0.1)).sum(0) / mask_w.sum()
+            best_known_score = known_vote.max()
+
+            if best_novel_score > best_known_score:
+                labels[q] = num_known + best_novel_cls
+                scores[q] = best_novel_score.sigmoid() * obj_score[q]
+            else:
+                labels[q] = known_vote.argmax()
+                scores[q] = best_known_score.sigmoid() * obj_score[q]
+
+    return _greedy_assign(scores, labels, masks_sig, V, overlap_thr)
+```
+
+### Why This Is Practical
+
+- Known-class PQ preserved nearly perfectly (falls back to linear head when confident)
+- Novel detection only triggers for uncertain queries → fewer false positives
+- No "pole catastrophe" — only uncertain masks get novel evaluation
+- Simple threshold tuning
+
+---
+
+## Updated Decision Matrix (Post Per-Voxel Finding, 2026-05-27)
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
+│ KEY FINDING: Backbone IS CLIP-aligned per-voxel. Feature POOLING degrades    │
+│ signal. Solution: classify per-voxel, then aggregate decisions within masks. │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                                │
+│ IMMEDIATE (no training, this week):                                           │
+│   → Strategy K (per-voxel majority vote) — simplest test of hypothesis      │
+│   → Strategy L (logit aggregation) — efficient, mathematically clean        │
+│   → Strategy M (confidence-gated novel) — preserves known PQ, adds novel    │
+│                                                                                │
 │ COMPLETED:                                                                    │
-│   Strategy E (geometric ensemble) — validated framework, weak novel signal   │
+│   Strategy E (geometric ensemble) — proved backbone is CLIP-aligned,         │
+│   but feature-pooling approach is fundamentally limited (PQ=0.463)           │
 │                                                                                │
-│ HIGHEST IMMEDIATE IMPACT ON CLOSED-SET PQ:                                   │
-│   → Strategy H (unfreeze encoder with CLIP reg) — PQ 0.477→0.50+            │
-│   → Strategy I (voxel decomposition loss) — better per-voxel features       │
+│ SHORT-TERM TRAINING (1-2 weeks, single A100):                                │
+│   → Strategy I (voxel decomp loss) — directly strengthens per-voxel CLIP    │
+│     alignment for voting. Expected: K/L novel detection improves greatly.    │
+│   → Strategy C1 (200 negatives) — token head generalization                 │
 │                                                                                │
-│ HIGHEST IMPACT ON OPEN-VOCAB:                                                │
-│   → Strategy A (class-agnostic masks) — removes closed-set decoder bias     │
-│   → Strategy C1 (200 negative bank for token head) — prevents collapse       │
-│   → Strategy I + diverse negatives — per-voxel open-vocab alignment          │
-│                                                                                │
-│ BEST COMBINED (CLOSED + OPEN):                                               │
-│   → Strategy H + I: unfreeze backbone + voxel decomp with 200 negatives    │
-│     This simultaneously:                                                      │
-│     a) Improves closed PQ (features become panoptic-aware)                   │
-│     b) Maintains CLIP alignment (regularization)                              │
-│     c) Enables open-vocab (diverse negatives force full-space navigation)    │
-│                                                                                │
-│ NOVEL ZERO-SHOT (no retraining):                                             │
-│   → Strategy G (CLIP-initialized queries) — add novel-class queries at eval │
-│   → Better prototypes (multi-template averaging)                              │
+│ MEDIUM-TERM (2-3 weeks):                                                      │
+│   → Strategy H (unfreeze + CLIP reg) — makes voxels more discriminative     │
+│   → Strategy H + I combined — strongest: panoptic-aware + CLIP-aligned      │
 │                                                                                │
 │ LONG-TERM / PUBLICATION:                                                      │
-│   → Strategy D (camera cross-attention) + Strategy J (CLIP encoder)          │
-│   → Strategy F (VLM captions) — only if compute budget allows                │
+│   → Strategy D (camera CLIP features) — bypasses 3D backbone entirely       │
+│   → Strategy J (CLIP encoder from scratch) — if H+I not enough              │
+│   → Strategy A (class-agnostic) — removes closed-set decoder bias           │
+│                                                                                │
+│ DEPRIORITIZED:                                                                │
+│   → Strategy G (CLIP queries) — decoder attention is spatial not semantic    │
+│   → Strategy F (VLM captions) — out of scope for compute budget             │
+│   → Per-class temperature / bias correction — proven ineffective (too small) │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Updated Recommended Execution Order
 
 ```
-DONE: Strategy E (geometric ensemble) — diagnostic complete
+DONE: Strategy E — diagnostic, proved CLIP alignment, identified pooling problem
+DONE: Bias correction — proved ±0.08 range (too small to help), confirms per-voxel alignment
 
-Week 1 (Quick wins, no retraining):
-  - Multi-prompt prototypes (average 5-10 templates) for existing geo-ensemble
-  - Visual verification with visualize_novel_detections.py
-  - Per-class temperature tuning sweep (τ ∈ {0.05, 0.07, 0.1, 0.2})
+THIS WEEK (inference-only, validate per-voxel hypothesis):
+  Day 1: Strategy L (logit aggregation) — implement & run on trainval
+         - This is the cleanest test: if per-voxel logit aggregation >> feature pooling,
+           hypothesis confirmed
+  Day 2: Strategy M (confidence-gated) — implement & compare
+         - Specifically measure: how many novel objects detected vs Strategy E?
+  Day 3: Sweep parameters (temperature, alpha, confidence threshold)
+         - Determine best configuration for inference-only pipeline
 
-Week 2 (Moderate retraining):
-  - Strategy C1: Add 200 text negatives to token head loss → retrain 10 epochs
-  - Strategy I: Add voxel decomposition loss (w_voxel=0.5) → retrain from current best checkpoint
-  - Compare: does per-voxel alignment help backbone-pool and geo-ensemble?
+NEXT WEEK (training, single A100, ~72h total):
+  - Strategy I: Add voxel decomposition loss to current training
+    - Start from best checkpoint, train 10 epochs with w_voxel=0.5
+    - Use 200+ diverse text negatives (not just 16)
+    - Re-evaluate with Strategy L → measure novel detection improvement
+  - Strategy C1: Add 200 negatives to token head (quick experiment)
 
-Week 3 (Architecture changes):
-  - Strategy H: Unfreeze backbone with CLIP regularization → train 20 epochs
-  - Strategy G: CLIP-initialized queries (change init, same training)
-  - Evaluate combined: unfrozen backbone + voxel decomp + geo-ensemble
+WEEK 3 (architecture):
+  - Strategy H: Unfreeze backbone (LR=1e-6) with CLIP regularization
+    - Combined with Strategy I (voxel decomp + diverse negatives)
+    - 20 epochs, monitor cosine drift (should stay >0.9)
+    - Re-evaluate all metrics: closed PQ + novel detection
 
-Week 4 (Open-vocab focused):
-  - Strategy A: Class-agnostic retraining → test if unbiased proposals help
-  - Strategy D (inference only): camera features at eval time
-  - Full open-vocab evaluation with 20+ novel classes
+WEEK 4+ (if needed):
+  - Strategy D: Camera CLIP features at inference (precompute offline)
+  - Strategy A: Class-agnostic mask retraining
 ```

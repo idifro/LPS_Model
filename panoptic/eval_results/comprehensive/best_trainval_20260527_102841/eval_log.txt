@@ -1,0 +1,179 @@
+======================================================================
+  Comprehensive Panoptic Evaluation
+======================================================================
+  Config:     panoptic/configs/full_nuscenes_token_v2.yaml
+  Checkpoint: panoptic/checkpoints_token_full_v2/best.pth
+  Version:    v1.0-trainval
+  Modes:      ['linear', 'token', 'backbone_pool_v2', 'geometric_ensemble', 'geo_ensemble_v2']
+  Output:     panoptic/eval_results/comprehensive/best_trainval_20260527_102841
+======================================================================
+
+Loading NuScenes database (version=v1.0-trainval, dataroot=/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes)...
+  NuScenes loaded: 850 scenes
+Creating NuScenesPanoptic dataset (split=val)...
+[NuScenesPanoptic] val: 6019 samples from v1.0-trainval
+  Dataset created: 6019 samples
+Creating DataLoader (num_workers=0)...
+[NuScenesPanoptic] val: 6019 samples from v1.0-trainval
+
+Generating 5 novel class prototypes with CLIP: ['police car', 'ambulance', 'trash cans', 'pole', 'bench']
+Loaded cached 21-class prototypes from panoptic/clip_prototypes/text_prototypes_vitl14_336_21class.pt
+Generating multi-prompt ensembled prototypes for ['police car', 'ambulance', 'trash cans', 'pole', 'bench']
+    police car: 6 prompts averaged
+    ambulance: 6 prompts averaged
+    trash cans: 6 prompts averaged
+    pole: 5 prompts averaged
+    bench: 6 prompts averaged
+Saved multi-prompt 21-class prototypes to panoptic/clip_prototypes/text_prototypes_vitl14_336_multiprompt_21class.pt
+16-class prototypes: torch.Size([16, 768])
+22-class prototypes: torch.Size([21, 768])
+Multi-prompt prototypes: torch.Size([21, 768])
+
+CLIP unloaded, GPU cache cleared.
+Loading backbone from: models/nuscenes_openseg.pth.tar
+  Backbone loaded.
+Loading decoder from: panoptic/checkpoints_token_full_v2/best.pth
+  Decoder loaded. Token head detected: True
+
+Computing prototype bias (calibration on 50 samples)...
+Computing prototype bias from 50 calibration samples...
+    [25/50]
+    [50/50]
+  Prototype bias range: [-0.0830, 0.0779]
+    barrier                  : 0.0464
+    bicycle                  : -0.0830
+    bus                      : -0.0474
+    car                      : -0.0189
+    construction_vehicle     : -0.0183
+    motorcycle               : -0.0672
+    pedestrian               : 0.0346
+    traffic_cone             : -0.0210
+    trailer                  : -0.0304
+    truck                    : -0.0364
+    driveable_surface        : 0.0597
+    other_flat               : -0.0100
+    sidewalk                 : 0.0651
+    terrain                  : -0.0056
+    manmade                  : 0.0267
+    vegetation               : -0.0157
+    novel_0                  : -0.0486
+    novel_1                  : -0.0522
+    novel_2                  : 0.0156
+    novel_3                  : 0.0779
+    novel_4                  : -0.0455
+  Proto bias: tensor([ 0.0464, -0.0830, -0.0474, -0.0189, -0.0183, -0.0672,  0.0346, -0.0210,
+        -0.0304, -0.0364,  0.0597, -0.0100,  0.0651, -0.0056,  0.0267, -0.0157,
+        -0.0486, -0.0522,  0.0156,  0.0779, -0.0455], device='cuda:0')
+Evaluating 6019 samples across modes: ['linear', 'token', 'backbone_pool_v2', 'geometric_ensemble', 'geo_ensemble_v2']
+
+  [50/6019]
+  [100/6019]
+  [150/6019]
+  [200/6019]
+  [250/6019]
+  [300/6019]
+  [350/6019]
+  [400/6019]
+  [450/6019]
+  [500/6019]
+  [550/6019]
+  [600/6019]
+  [650/6019]
+  [700/6019]
+  [750/6019]
+  [800/6019]
+  [850/6019]
+  [900/6019]
+  [950/6019]
+  [1000/6019]
+  [1050/6019]
+  [1100/6019]
+  [1150/6019]
+  [1200/6019]
+  [1250/6019]
+  [1300/6019]
+  [1350/6019]
+  [1400/6019]
+  [1450/6019]
+  [1500/6019]
+  [1550/6019]
+  [1600/6019]
+  [1650/6019]
+  [1700/6019]
+  [1750/6019]
+  [1800/6019]
+  [1850/6019]
+  [1900/6019]
+  [1950/6019]
+  [2000/6019]
+  [2050/6019]
+  [2100/6019]
+  [2150/6019]
+  [2200/6019]
+  [2250/6019]
+  [2300/6019]
+  [2350/6019]
+  [2400/6019]
+  [2450/6019]
+  [2500/6019]
+  [2550/6019]
+  [2600/6019]
+  [2650/6019]
+  [2700/6019]
+  [2750/6019]
+  [2800/6019]
+  [2850/6019]
+  [2900/6019]
+  [2950/6019]
+  [3000/6019]
+  [3050/6019]
+  [3100/6019]
+  [3150/6019]
+  [3200/6019]
+  [3250/6019]
+  [3300/6019]
+  [3350/6019]
+  [3400/6019]
+  [3450/6019]
+  [3500/6019]
+  [3550/6019]
+  [3600/6019]
+  [3650/6019]
+  [3700/6019]
+  [3750/6019]
+  [3800/6019]
+  [3850/6019]
+  [3900/6019]
+  [3950/6019]
+  [4000/6019]
+  [4050/6019]
+  [4100/6019]
+  [4150/6019]
+  [4200/6019]
+  [4250/6019]
+  [4300/6019]
+  [4350/6019]
+  [4400/6019]
+  [4450/6019]
+  [4500/6019]
+  [4550/6019]
+  [4600/6019]
+  [4650/6019]
+  [4700/6019]
+  [4750/6019]
+  [4800/6019]
+  [4850/6019]
+  [4900/6019]
+  [4950/6019]
+  [5000/6019]
+  [5050/6019]
+  [5100/6019]
+  [5150/6019]
+  [5200/6019]
+  [5250/6019]
+  [5300/6019]
+  [5350/6019]
+  [5400/6019]
+  [5450/6019]
+  [5500/6019]
+  [5550/6019]
