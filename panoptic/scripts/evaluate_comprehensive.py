@@ -1,17 +1,21 @@
-"""Comprehensive panoptic evaluation: 5 modes in a single forward pass.
+"""Comprehensive panoptic evaluation: 8 modes in a single forward pass.
 
 Modes:
   A. Linear         – pred_logits softmax → 16 known classes
   B. Token-16       – pred_tokens cosine sim → 16 known classes
   C. Ensemble       – alpha sweep blending A+B → 16 known classes
   D. Token-OpenVocab – pred_tokens cosine sim → 22 classes (16 known + 6 novel)
-  E. Backbone-Pool  – mean-pool encoder feats per mask → 22 classes (baseline)
+  E. Backbone-Pool  – mean-pool encoder feats per mask → 22 classes (legacy, buggy)
+  F. Backbone-Pool-v2 – normalized soft-pool encoder feats → N classes (bug-fixed)
+  G. Geometric-Ensemble – linear^alpha * clip_pool^(1-alpha) → N classes (Strategy E)
+  H. Geo-Ensemble-v2 – G + multi-prompt prototypes + per-class temperature (improved)
 
 Usage:
     python -u panoptic/scripts/evaluate_comprehensive.py \
         --config panoptic/configs/full_nuscenes_token_v2.yaml \
         --checkpoint panoptic/checkpoints_token_full_v2/best.pth \
-        --version v1.0-mini
+        --version v1.0-mini \
+        --novel-classes "police car,ambulance,trash cans,pole,bench"
 """
 import argparse
 import sys
@@ -37,11 +41,68 @@ from panoptic.dataset.nuscenes_panoptic import (
 )
 
 # ── Constants ──────────────────────────────────────────────────────────────
-NOVEL_CLASS_NAMES = ["pole", "bench", "trash can", "fire hydrant", "tree trunk", "curb"]
-ALL_22_CLASS_NAMES = list(NUSCENES_CLASS_NAMES) + NOVEL_CLASS_NAMES
+DEFAULT_NOVEL_CLASS_NAMES = ["police car", "ambulance", "trash cans", "pole", "bench"]
+LEGACY_NOVEL_CLASS_NAMES = ["pole", "bench", "trash can", "fire hydrant", "tree trunk", "curb"]
 THING_CLASSES_16 = set(range(10))  # 0-9 are things in nuScenes-16
 
-ALL_MODES = ["linear", "token", "ensemble", "token_openvocab", "backbone_openvocab"]
+ALL_MODES = ["linear", "token", "backbone_pool_v2", "geometric_ensemble", "geo_ensemble_v2"]
+
+# ── Multi-prompt templates for novel classes ──────────────────────────────
+# Each novel class has 5-8 descriptions emphasizing distinguishing features.
+# Averaged embeddings are more distinctive than single generic prompts.
+MULTI_PROMPT_TEMPLATES = {
+    "police car": [
+        "a police car with flashing lights on the road",
+        "a law enforcement vehicle with sirens and markings",
+        "a black and white police cruiser parked on the street",
+        "a police patrol car with emergency lights on top",
+        "a marked police sedan driving on the highway",
+        "a police vehicle with decals and a light bar",
+    ],
+    "ambulance": [
+        "a white ambulance with red cross markings",
+        "an emergency ambulance with flashing lights and sirens",
+        "a paramedic ambulance van parked at a hospital",
+        "a large white emergency medical vehicle on the road",
+        "an ambulance with a red stripe and emergency markings",
+        "a boxy white ambulance driving with lights flashing",
+    ],
+    "trash cans": [
+        "a plastic trash can on the sidewalk",
+        "a green garbage bin at the curb for waste collection",
+        "a wheeled trash container next to a building",
+        "a large rectangular waste bin on the street",
+        "a dumpster or trash receptacle near a building",
+        "a cylindrical garbage can on the pavement",
+    ],
+    "pole": [
+        "a thin vertical street light pole on the sidewalk",
+        "a tall metal lamp post with a light fixture on top",
+        "a narrow sign pole standing vertically on the curb",
+        "a thin cylindrical traffic signal pole at an intersection",
+        "a slender metal utility pole along the road",
+    ],
+    "bench": [
+        "a park bench with a backrest on the sidewalk",
+        "a wooden bench seat near a bus stop",
+        "a metal bench with armrests on the pavement",
+        "a public sitting bench by the roadside",
+        "a flat seating bench at a pedestrian area",
+        "a horizontal bench with legs on the ground",
+    ],
+}
+
+# ── Per-class temperature (higher = flatter/less dominant) ────────────────
+# DEPRECATED: Hardcoded per-class temperatures are not generalizable.
+# Replaced by automatic prototype bias correction (see compute_prototype_bias
+# and panoptic_inference_geometric_ensemble_v2). Kept for reference only.
+PER_CLASS_TEMPERATURE_NOVEL = {
+    "police car": 0.07,
+    "ambulance": 0.07,
+    "trash cans": 0.1,
+    "pole": 0.4,
+    "bench": 0.1,
+}
 
 
 # ── TeeLogger ──────────────────────────────────────────────────────────────
@@ -201,7 +262,7 @@ def extract_backbone_features(backbone, batch, device):
     with torch.no_grad():
         output = backbone(sinput)
     feats = output.F if hasattr(output, "F") else output
-    coords_xyz = vox_feats.to(device)
+    coords_xyz = vox_coords.to(device).float()
     return feats.unsqueeze(0), coords_xyz.unsqueeze(0)
 
 
@@ -232,39 +293,64 @@ def load_decoder_flexible(cfg, ckpt_path, device):
 
 
 # ── Prototype loading/generation ───────────────────────────────────────────
-def load_or_generate_22_prototypes(known_proto_path, novel_proto_path, device):
-    """Load 16-class protos, extend to 22 with novel classes."""
+def load_or_generate_22_prototypes(known_proto_path, novel_proto_path, device,
+                                    novel_class_names=None):
+    """Load 16-class protos, extend with novel classes.
+
+    Args:
+        known_proto_path: Path to 16-class prototype .pt file.
+        novel_proto_path: Path to pre-computed extended prototype file (optional).
+        device: Target device.
+        novel_class_names: List of novel class name strings. Defaults to DEFAULT_NOVEL_CLASS_NAMES.
+
+    Returns:
+        tuple: (known_emb on device, all_emb on device or None if generation fails).
+    """
+    if novel_class_names is None:
+        novel_class_names = DEFAULT_NOVEL_CLASS_NAMES
+
     known_data = torch.load(known_proto_path, map_location="cpu")
     known_emb = known_data["embeddings"].float()  # (16, 768)
 
     if novel_proto_path and os.path.exists(novel_proto_path):
         novel_data = torch.load(novel_proto_path, map_location="cpu")
-        all_emb = novel_data["embeddings"].float()  # (22, 768)
-        print(f"Loaded 22-class prototypes from {novel_proto_path}", flush=True)
+        all_emb = novel_data["embeddings"].float()
+        print(f"Loaded extended prototypes from {novel_proto_path} ({all_emb.shape[0]} classes)", flush=True)
         return known_emb.to(device), all_emb.to(device)
 
     # Generate novel prototypes on the fly
-    print("Generating novel class prototypes with CLIP...", flush=True)
+    num_novel = len(novel_class_names)
+    print(f"Generating {num_novel} novel class prototypes with CLIP: {novel_class_names}", flush=True)
+    # Check if cached file exists
+    auto_save_path = novel_proto_path or known_proto_path.replace(".pt", f"_{16+num_novel}class.pt")
+    if os.path.exists(auto_save_path):
+        cached = torch.load(auto_save_path, map_location="cpu")
+        all_emb = cached["embeddings"].float()
+        print(f"Loaded cached {all_emb.shape[0]}-class prototypes from {auto_save_path}", flush=True)
+        return known_emb.to(device), all_emb.to(device)
+
     try:
         import clip
+        # CLIP runs on GPU here — panoptic model not loaded yet
         model, _ = clip.load("ViT-L/14@336px", device=device, jit=False)
         model.eval()
         template = known_data.get("prompt_template", "a {} in a scene")
-        prompts = [template.format(name) for name in NOVEL_CLASS_NAMES]
+        prompts = [template.format(name) for name in novel_class_names]
         tokens = clip.tokenize(prompts).to(device)
         with torch.no_grad():
             novel_feats = model.encode_text(tokens)
             novel_feats = novel_feats / novel_feats.norm(dim=-1, keepdim=True)
         novel_feats = novel_feats.float().cpu()
-        all_emb = torch.cat([known_emb, novel_feats], dim=0)  # (22, 768)
+        all_emb = torch.cat([known_emb, novel_feats], dim=0)  # (16+N, 768)
         # Save for next time
-        save_path = novel_proto_path or known_proto_path.replace(".pt", "_22class.pt")
+        save_path = auto_save_path
+        all_class_names = list(NUSCENES_CLASS_NAMES) + novel_class_names
         torch.save({
             "embeddings": all_emb,
-            "class_names": ALL_22_CLASS_NAMES,
+            "class_names": all_class_names,
             "prompt_template": template,
         }, save_path)
-        print(f"Saved 22-class prototypes to {save_path}", flush=True)
+        print(f"Saved {all_emb.shape[0]}-class prototypes to {save_path}", flush=True)
         del model
         torch.cuda.empty_cache()
         return known_emb.to(device), all_emb.to(device)
@@ -272,6 +358,147 @@ def load_or_generate_22_prototypes(known_proto_path, novel_proto_path, device):
         print("ERROR: CLIP not installed. Cannot generate novel prototypes.", flush=True)
         print("Install with: pip install git+https://github.com/openai/CLIP.git", flush=True)
         return known_emb.to(device), None
+
+
+def generate_multi_prompt_prototypes(known_proto_path, device, novel_class_names=None):
+    """Generate novel class prototypes using multi-prompt ensembling.
+
+    Instead of a single "a {class} in a scene" template, each novel class is
+    represented by the average of 5-8 diverse descriptions that emphasize
+    distinguishing features. This produces more distinctive embeddings that
+    separate novel classes from similar known classes.
+
+    Args:
+        known_proto_path: Path to 16-class prototype .pt file.
+        device: Target device.
+        novel_class_names: List of novel class names.
+
+    Returns:
+        tuple: (known_emb, all_emb) on device, or (known_emb, None) on failure.
+    """
+    if novel_class_names is None:
+        novel_class_names = DEFAULT_NOVEL_CLASS_NAMES
+
+    known_data = torch.load(known_proto_path, map_location="cpu")
+    known_emb = known_data["embeddings"].float()  # (16, 768)
+
+    print(f"Generating multi-prompt ensembled prototypes for {novel_class_names}", flush=True)
+    # Check if cached multi-prompt file exists
+    save_path = known_proto_path.replace(".pt", f"_multiprompt_{16 + len(novel_class_names)}class.pt")
+    if os.path.exists(save_path):
+        cached = torch.load(save_path, map_location="cpu")
+        all_emb = cached["embeddings"].float().to(device)
+        print(f"Loaded cached multi-prompt prototypes from {save_path} ({all_emb.shape[0]} classes)", flush=True)
+        return known_emb.to(device), all_emb
+
+    try:
+        import clip
+        # CLIP runs on GPU here — panoptic model not loaded yet
+        model, _ = clip.load("ViT-L/14@336px", device=device, jit=False)
+        model.eval()
+
+        novel_embeddings = []
+        for name in novel_class_names:
+            # Use multi-prompt templates if available, else fallback
+            if name in MULTI_PROMPT_TEMPLATES:
+                prompts = MULTI_PROMPT_TEMPLATES[name]
+            else:
+                prompts = [
+                    f"a {name} in a scene",
+                    f"a {name} on the road",
+                    f"a {name} in an urban environment",
+                    f"a {name} near the street",
+                    f"a photo of a {name}",
+                ]
+
+            tokens = clip.tokenize(prompts).to(device)
+            with torch.no_grad():
+                feats = model.encode_text(tokens)  # (N_prompts, 768)
+                feats = feats / feats.norm(dim=-1, keepdim=True)
+                avg_feat = feats.mean(dim=0)
+                avg_feat = avg_feat / avg_feat.norm()
+
+            novel_embeddings.append(avg_feat.float().cpu())
+            print(f"    {name}: {len(prompts)} prompts averaged", flush=True)
+
+        del model
+        torch.cuda.empty_cache()
+
+        novel_emb = torch.stack(novel_embeddings)  # (N_novel, 768)
+        all_emb = torch.cat([known_emb, novel_emb], dim=0)
+
+        # Save for future runs (avoids reloading CLIP)
+        torch.save({
+            "embeddings": all_emb,
+            "class_names": list(NUSCENES_CLASS_NAMES) + novel_class_names,
+            "multi_prompt": True,
+        }, save_path)
+        print(f"Saved multi-prompt {all_emb.shape[0]}-class prototypes to {save_path}", flush=True)
+
+        return known_emb.to(device), all_emb.to(device)
+
+    except ImportError:
+        print("ERROR: CLIP not installed.", flush=True)
+        return known_emb.to(device), None
+
+
+def compute_prototype_bias(backbone, val_loader, text_protos, device, num_calibration=50):
+    """Compute per-prototype background affinity bias from calibration samples.
+
+    For each text prototype, computes the average cosine similarity to
+    randomly pooled backbone features. Prototypes with high average similarity
+    to "anything" (like "pole") get a high bias value that will be subtracted
+    at inference, suppressing false positives.
+
+    Args:
+        backbone: Frozen DisNet backbone model.
+        val_loader: DataLoader for calibration (uses first num_calibration samples).
+        text_protos: (C, 768) all text prototypes (known + novel).
+        device: Target device.
+        num_calibration: Number of samples to use for bias estimation.
+
+    Returns:
+        Tensor: (C,) per-prototype bias (average background similarity).
+    """
+    num_classes = text_protos.shape[0]
+    sim_accum = torch.zeros(num_classes, device=device)
+    total_queries = 0
+
+    print(f"Computing prototype bias from {num_calibration} calibration samples...", flush=True)
+
+    with torch.no_grad():
+        for i, batch in enumerate(val_loader):
+            if i >= num_calibration:
+                break
+
+            feats, _ = extract_backbone_features(backbone, batch, device)
+            feats_v = feats[0]  # (V, 768)
+            V = feats_v.shape[0]
+
+            # Normalize
+            feats_normed = F.normalize(feats_v.float(), dim=-1)
+
+            # Random "queries": groups of ~100 voxels averaged (simulates mask-pooling)
+            num_random_queries = min(30, V // 100)
+            for _ in range(num_random_queries):
+                size = torch.randint(50, min(200, V), (1,)).item()
+                idx = torch.randperm(V, device=device)[:size]
+                pooled = F.normalize(feats_normed[idx].mean(dim=0, keepdim=True), dim=-1)  # (1, 768)
+                sim = (pooled @ text_protos.T).squeeze(0)  # (C,)
+                sim_accum += sim
+                total_queries += 1
+
+            if (i + 1) % 25 == 0:
+                print(f"    [{i+1}/{num_calibration}]", flush=True)
+
+    bias = sim_accum / max(total_queries, 1)  # (C,) average similarity per prototype
+    print(f"  Prototype bias range: [{bias.min():.4f}, {bias.max():.4f}]", flush=True)
+    all_names = list(NUSCENES_CLASS_NAMES)
+    for c in range(num_classes):
+        name = all_names[c] if c < len(all_names) else f"novel_{c-len(all_names)}"
+        print(f"    {name:<25s}: {bias[c]:.4f}", flush=True)
+
+    return bias
 
 
 # ── Inference functions ────────────────────────────────────────────────────
@@ -358,79 +585,206 @@ def panoptic_inference_token(pred_tokens, pred_masks, text_prototypes, overlap_t
     return _greedy_assign(scores[keep], labels[keep], masks[:, keep], V, overlap_thr, thing_set)
 
 
-def panoptic_inference_ensemble(pred_logits, pred_tokens, pred_masks, text_prototypes,
-                                 num_classes=16, overlap_thr=0.8, alpha=0.5):
-    """Perform panoptic inference by blending linear and token scores (Mode C).
+def panoptic_inference_backbone_pool_v2(backbone_feats, pred_masks, text_protos,
+                                         overlap_thr=0.8, min_mask_pts=50):
+    """Fixed backbone-pool: normalize BEFORE pooling, soft mask-weighted averaging.
 
-    Combines the softmax probability from the linear head with the normalized
-    cosine similarity from the token head using a weighted sum controlled by
-    alpha, then applies greedy mask assignment.
-
-    Steps:
-        1. Computes linear softmax probabilities over the known classes.
-        2. Computes cosine similarity between tokens and text prototypes.
-        3. Normalizes cosine similarities to [0, 1] and blends with alpha.
-        4. Filters low-score queries and delegates to _greedy_assign.
+    This fixes the PQ=0.209 bug in the legacy backbone_pool by:
+    1. L2-normalizing backbone features before pooling (prevents large-norm dominance)
+    2. Using soft sigmoid mask weights instead of binary thresholding
+    3. Per-query weight normalization for proper averaging
+    4. Filtering by mask area as an objectness proxy
 
     Args:
-        pred_logits (Tensor): Query logits of shape (Q, C+1).
-        pred_tokens (Tensor): Query token embeddings of shape (Q, D).
-        pred_masks (Tensor): Mask logits of shape (V, Q).
-        text_prototypes (Tensor): Text embeddings of shape (C, D).
-        num_classes (int): Number of valid classes (default 16).
-        overlap_thr (float): Minimum overlap ratio for mask acceptance.
-        alpha (float): Blending weight; 1.0 = pure linear, 0.0 = pure token.
+        backbone_feats (Tensor): Raw backbone output, shape (V, 768).
+        pred_masks (Tensor): Mask logits from decoder, shape (V, Q).
+        text_protos (Tensor): Text prototypes, shape (C, 768) for C classes.
+        overlap_thr (float): Overlap threshold for greedy assignment.
+        min_mask_pts (float): Minimum soft mask area to consider a query valid.
 
     Returns:
         tuple: (sem_pred, inst_pred) numpy arrays of shape (V,).
     """
-    linear_probs = pred_logits[:, :num_classes].softmax(-1)
-    cos_sim = torch.mm(pred_tokens, text_prototypes.t())
-    cos_sim_norm = (cos_sim + 1) / 2
-    combined = alpha * linear_probs + (1 - alpha) * cos_sim_norm
-    scores, labels = combined.max(-1)
-    masks = pred_masks.sigmoid()
-    V = masks.shape[0]
-    keep = scores > 0.1
-    if keep.sum() == 0:
-        return np.zeros(V, dtype=np.int64), np.zeros(V, dtype=np.int64)
-    return _greedy_assign(scores[keep], labels[keep], masks[:, keep], V, overlap_thr)
+    V, Q = pred_masks.shape
+    num_protos = text_protos.shape[0]
 
+    # 1. Normalize backbone features BEFORE pooling (critical fix)
+    backbone_normed = F.normalize(backbone_feats.float(), dim=-1)  # (V, 768) unit sphere
 
-def panoptic_inference_backbone_pool(backbone_feats, pred_masks, text_protos_22, overlap_thr=0.8):
-    """Mean-pool raw backbone features per mask, cosine sim to 22 prototypes."""
-    masks = pred_masks.sigmoid()  # (V, Q)
-    V, Q = masks.shape
-    pooled = []
-    valid_queries = []
-    for q in range(Q):
-        binary = masks[:, q] >= 0.5
-        if binary.sum() < 10:
-            continue
-        feat_pool = backbone_feats[binary].mean(dim=0)  # (768,)
-        feat_pool = F.normalize(feat_pool, dim=0)
-        pooled.append(feat_pool)
-        valid_queries.append(q)
+    # 2. Soft mask-weighted pooling
+    mask_probs = pred_masks.sigmoid()  # (V, Q) soft [0,1]
+    mask_area = mask_probs.sum(dim=0)  # (Q,) total activation per query
 
-    if len(pooled) == 0:
-        return np.zeros(V, dtype=np.int64), np.zeros(V, dtype=np.int64)
+    # 3. Per-query normalized weights for proper averaging
+    weights = mask_probs / mask_area.clamp(min=1e-6).unsqueeze(0)  # (V, Q)
 
-    pooled = torch.stack(pooled)  # (Qv, 768)
-    cos_sim = torch.mm(pooled, text_protos_22.t())  # (Qv, 22)
-    scores, labels = cos_sim.max(-1)
+    # 4. Weighted average pooling + re-normalize
+    pooled = weights.T @ backbone_normed  # (Q, 768)
+    pooled = F.normalize(pooled, dim=-1)
 
-    # Rebuild masks for valid queries only
-    valid_masks = masks[:, valid_queries]  # (V, Qv)
-    num_protos = text_protos_22.shape[0]
+    # 5. Classify via cosine similarity
+    sim = pooled @ text_protos.T  # (Q, C)
+    scores, labels = sim.max(dim=-1)
+
+    # 6. Filter by mask area (objectness proxy)
+    scores[mask_area < min_mask_pts] = -1.0
+
+    # 7. Greedy panoptic assignment
     thing_set = THING_CLASSES_16 | set(range(16, num_protos))
-    return _greedy_assign(scores, labels, valid_masks, V, overlap_thr, thing_set)
+    return _greedy_assign(scores, labels, mask_probs, V, overlap_thr, thing_set)
+
+
+def panoptic_inference_geometric_ensemble(pred_logits, pred_masks, backbone_feats,
+                                           text_protos_all, num_known=16,
+                                           overlap_thr=0.8, alpha=0.5,
+                                           temperature=0.1, min_mask_pts=50):
+    """Geometric ensemble: linear head (known) + backbone pool (known+novel).
+
+    For known classes (0..num_known-1): combined = linear_prob^alpha * clip_prob^(1-alpha)
+    For novel classes (num_known..C-1): combined = clip_prob only
+
+    This enables open-vocabulary detection by leveraging the linear head's strength
+    on known classes while allowing the frozen backbone's CLIP features to detect
+    novel objects via mask-pooled cosine similarity.
+
+    Args:
+        pred_logits (Tensor): Query logits, shape (Q, num_known+1).
+        pred_masks (Tensor): Mask logits, shape (V, Q).
+        backbone_feats (Tensor): Raw backbone features, shape (V, 768).
+        text_protos_all (Tensor): All text prototypes, shape (C, 768) where C = known + novel.
+        num_known (int): Number of known classes (default 16).
+        overlap_thr (float): Overlap threshold for greedy assignment.
+        alpha (float): Blend weight. 1.0 = pure linear, 0.0 = pure CLIP.
+        temperature (float): Softmax temperature for CLIP logits.
+        min_mask_pts (float): Minimum soft mask area for valid queries.
+
+    Returns:
+        tuple: (sem_pred, inst_pred) numpy arrays of shape (V,).
+    """
+    V, Q = pred_masks.shape
+    num_total = text_protos_all.shape[0]
+
+    # ── Linear head probs (known classes only) ──
+    linear_probs = pred_logits[:, :num_known].softmax(dim=-1)  # (Q, num_known)
+
+    # ── CLIP backbone-pool probs (all classes) ──
+    backbone_normed = F.normalize(backbone_feats.float(), dim=-1)  # (V, 768)
+    mask_probs = pred_masks.sigmoid()  # (V, Q)
+    mask_area = mask_probs.sum(dim=0)  # (Q,)
+    weights = mask_probs / mask_area.clamp(min=1e-6).unsqueeze(0)  # (V, Q)
+    pooled = F.normalize(weights.T @ backbone_normed, dim=-1)  # (Q, 768)
+    clip_logits = pooled @ text_protos_all.T / temperature  # (Q, C_all)
+    clip_probs = clip_logits.softmax(dim=-1)  # (Q, C_all)
+
+    # ── Geometric ensemble ──
+    combined = torch.zeros(Q, num_total, device=pred_logits.device)
+    # Known classes: geometric mean
+    combined[:, :num_known] = (linear_probs ** alpha) * (clip_probs[:, :num_known] ** (1 - alpha))
+    # Novel classes: CLIP only
+    if num_total > num_known:
+        combined[:, num_known:] = clip_probs[:, num_known:]
+    # Renormalize
+    combined = combined / combined.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+
+    scores, labels = combined.max(dim=-1)
+
+    # ── Objectness from linear head's no-object score ──
+    no_obj_prob = pred_logits.softmax(dim=-1)[:, -1]  # P(no-object)
+    objectness = 1.0 - no_obj_prob
+    scores = scores * objectness
+
+    # Filter tiny masks
+    scores[mask_area < min_mask_pts] = -1.0
+
+    # Greedy assign (novel classes treated as things)
+    thing_set = THING_CLASSES_16 | set(range(num_known, num_total))
+    return _greedy_assign(scores, labels, mask_probs, V, overlap_thr, thing_set)
+
+
+def panoptic_inference_geometric_ensemble_v2(pred_logits, pred_masks, backbone_feats,
+                                              text_protos_all, proto_bias,
+                                              num_known=16, overlap_thr=0.8, alpha=0.5,
+                                              temperature=0.1, min_mask_pts=50):
+    """Geometric ensemble v2: multi-prompt prototypes + automatic bias correction.
+
+    Key improvements over v1:
+    1. Multi-prompt ensembled prototypes (more distinctive embeddings).
+    2. Prototype bias correction: subtracts each prototype's "background affinity"
+       (average similarity to random features) before softmax. Prototypes that are
+       generically similar to everything (like "pole") get suppressed automatically.
+       This is fully generalized — works for any novel class without manual tuning.
+
+    The corrected logit is: logit_c = (cos_sim_c - bias_c) / temperature
+    A prototype with high bias (high average similarity to random pooled features)
+    needs a HIGHER actual similarity to fire — effectively raising its threshold.
+
+    Args:
+        pred_logits (Tensor): Query logits, shape (Q, num_known+1).
+        pred_masks (Tensor): Mask logits, shape (V, Q).
+        backbone_feats (Tensor): Raw backbone features, shape (V, 768).
+        text_protos_all (Tensor): All text prototypes, shape (C, 768).
+        proto_bias (Tensor): Per-prototype background affinity, shape (C,).
+        num_known (int): Number of known classes (default 16).
+        overlap_thr (float): Overlap threshold for greedy assignment.
+        alpha (float): Blend weight (1.0=pure linear, 0.0=pure CLIP).
+        temperature (float): Global softmax temperature.
+        min_mask_pts (float): Minimum soft mask area for valid queries.
+
+    Returns:
+        tuple: (sem_pred, inst_pred) numpy arrays of shape (V,).
+    """
+    V, Q = pred_masks.shape
+    num_total = text_protos_all.shape[0]
+
+    # ── Linear head probs (known classes only) ──
+    linear_probs = pred_logits[:, :num_known].softmax(dim=-1)  # (Q, num_known)
+
+    # ── CLIP backbone-pool with BIAS CORRECTION ──
+    backbone_normed = F.normalize(backbone_feats.float(), dim=-1)  # (V, 768)
+    mask_probs = pred_masks.sigmoid()  # (V, Q)
+    mask_area = mask_probs.sum(dim=0)  # (Q,)
+    weights = mask_probs / mask_area.clamp(min=1e-6).unsqueeze(0)  # (V, Q)
+    pooled = F.normalize(weights.T @ backbone_normed, dim=-1)  # (Q, 768)
+
+    # Raw cosine similarity
+    cos_sim = pooled @ text_protos_all.T  # (Q, C_all) values in [-1, 1]
+
+    # Bias correction: subtract each prototype's background affinity
+    # This makes "pole" (bias≈0.3) need cos_sim≈0.3+ to even register,
+    # while "police car" (bias≈0.15) fires at cos_sim≈0.2
+    corrected_logits = (cos_sim - proto_bias.unsqueeze(0)) / temperature  # (Q, C_all)
+    clip_probs = corrected_logits.softmax(dim=-1)  # (Q, C_all)
+
+    # ── Geometric ensemble ──
+    combined = torch.zeros(Q, num_total, device=pred_logits.device)
+    combined[:, :num_known] = (linear_probs ** alpha) * (clip_probs[:, :num_known] ** (1 - alpha))
+    if num_total > num_known:
+        combined[:, num_known:] = clip_probs[:, num_known:]
+    # Renormalize
+    combined = combined / combined.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+
+    scores, labels = combined.max(dim=-1)
+
+    # ── Objectness from linear head's no-object score ──
+    no_obj_prob = pred_logits.softmax(dim=-1)[:, -1]
+    objectness = 1.0 - no_obj_prob
+    scores = scores * objectness
+
+    # Filter tiny masks
+    scores[mask_area < min_mask_pts] = -1.0
+
+    # Greedy assign
+    thing_set = THING_CLASSES_16 | set(range(num_known, num_total))
+    return _greedy_assign(scores, labels, mask_probs, V, overlap_thr, thing_set)
 
 
 # ── Novel class stats ──────────────────────────────────────────────────────
-def count_novel_detections(sem_pred, num_known=16):
+def count_novel_detections(sem_pred, num_known=16, novel_class_names=None):
     """Count voxels and instances predicted as novel classes."""
+    if novel_class_names is None:
+        novel_class_names = DEFAULT_NOVEL_CLASS_NAMES
     stats = {}
-    for i, name in enumerate(NOVEL_CLASS_NAMES):
+    for i, name in enumerate(novel_class_names):
         cls_id = num_known + i
         mask = sem_pred == cls_id
         stats[name] = {"voxels": int(mask.sum()), "class_id": cls_id}
@@ -508,17 +862,26 @@ def main():
     parser.add_argument("--dataroot", default=None, help="Override data root path")
     parser.add_argument("--output_dir", default="panoptic/eval_results/comprehensive/")
     parser.add_argument("--modes", default=",".join(ALL_MODES),
-                        help="Comma-separated modes: linear,token,ensemble,token_openvocab,backbone_openvocab")
+                        help="Comma-separated modes: " + ",".join(ALL_MODES))
     parser.add_argument("--prototype_path", default=None, help="16-class prototype path (default from config)")
     parser.add_argument("--novel_prototype_path", default=None, help="22-class prototype path (auto-generated if missing)")
-    parser.add_argument("--ensemble_alphas", default="0.0,0.3,0.5,0.7,1.0")
+    parser.add_argument("--novel-classes", default=None,
+                        help="Comma-separated novel class names (default: police car,ambulance,trash cans,pole,bench)")
+    parser.add_argument("--geo_alphas", default="0.3,0.5,0.7", help="Alpha values for geometric ensemble sweep")
+    parser.add_argument("--geo_temperature", type=float, default=0.1, help="Temperature for geometric ensemble CLIP logits")
     parser.add_argument("--num_workers", type=int, default=0)
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     modes = [m.strip() for m in args.modes.split(",")]
-    alphas = [float(a) for a in args.ensemble_alphas.split(",")]
+    geo_alphas = [float(a) for a in args.geo_alphas.split(",")]
+
+    # Resolve novel class names (CLI > config > default)
+    if args.novel_classes:
+        novel_class_names = [n.strip() for n in args.novel_classes.split(",")]
+    else:
+        novel_class_names = cfg.get("novel_classes", DEFAULT_NOVEL_CLASS_NAMES)
 
     # Determine version and dataroot
     version = args.version or cfg["data"]["version"]
@@ -550,52 +913,55 @@ def main():
     # ── Load data ──
     dcfg = cfg["data"]
     from nuscenes.nuscenes import NuScenes as NuSc
-    print("Loading NuScenes database...", flush=True)
+    print(f"Loading NuScenes database (version={version}, dataroot={dcfg['dataroot']})...", flush=True)
     nusc = NuSc(version=version, dataroot=dcfg["dataroot"], verbose=False)
+    print(f"  NuScenes loaded: {len(nusc.scene)} scenes", flush=True)
+    print(f"Creating NuScenesPanoptic dataset (split=val)...", flush=True)
     val_ds = NuScenesPanoptic(
         dcfg["dataroot"], version, split="val",
         voxel_size=dcfg["voxel_size"],
         point_range=np.array(dcfg["point_range"]),
         augment=False, aug_cfg=None, nusc=nusc,
     )
+    print(f"  Dataset created: {len(val_ds)} samples", flush=True)
+    print(f"Creating DataLoader (num_workers={args.num_workers})...", flush=True)
     val_loader = torch.utils.data.DataLoader(
         val_ds, batch_size=1, shuffle=False, num_workers=args.num_workers,
         collate_fn=lambda x: x[0],
     )
-    print(f"Val: {len(val_ds)} samples\n", flush=True)
+    print(f"[NuScenesPanoptic] val: {len(val_ds)} samples from {version}\n", flush=True)
 
-    # ── Load models ──
-    backbone = load_backbone(cfg["model"]["backbone_ckpt"], device)
-    decoder, has_token_head = load_decoder_flexible(cfg, args.checkpoint, device)
-    print(f"Token head detected: {has_token_head}\n", flush=True)
-
-    # ── Filter modes based on capabilities ──
-    token_modes = {"token", "ensemble", "token_openvocab"}
-    if not has_token_head:
-        skipped = [m for m in modes if m in token_modes]
-        if skipped:
-            print(f"WARNING: No token_head — skipping modes: {skipped}\n", flush=True)
-        modes = [m for m in modes if m not in token_modes]
-
-    # ── Load prototypes ──
+    # ── Generate prototypes (CLIP on GPU first, before loading panoptic model) ──
     token_cfg = cfg.get("token", {})
     proto_path = args.prototype_path or token_cfg.get(
         "prototype_path", "panoptic/clip_prototypes/text_prototypes_vitl14_336.pt"
     )
     text_protos_16 = None
     text_protos_22 = None
+    text_protos_mp = None
+    proto_bias = None
 
-    needs_16 = any(m in modes for m in ["token", "ensemble"])
-    needs_22 = any(m in modes for m in ["token_openvocab", "backbone_openvocab"])
+    needs_16 = "token" in modes
+    needs_22 = any(m in modes for m in ["backbone_pool_v2", "geometric_ensemble",
+                                         "geo_ensemble_v2"])
 
     if needs_16 or needs_22:
         if needs_22:
             text_protos_16, text_protos_22 = load_or_generate_22_prototypes(
-                proto_path, args.novel_prototype_path, device
+                proto_path, args.novel_prototype_path, device, novel_class_names
             )
             if text_protos_22 is None:
-                print("WARNING: Could not load/generate 22-class prototypes, skipping open-vocab modes\n", flush=True)
-                modes = [m for m in modes if m not in {"token_openvocab", "backbone_openvocab"}]
+                print("WARNING: Could not load/generate extended prototypes, skipping open-vocab modes\n", flush=True)
+                modes = [m for m in modes if m not in {"backbone_pool_v2", "geometric_ensemble",
+                                                        "geo_ensemble_v2"}]
+            # Generate multi-prompt prototypes for v2
+            if "geo_ensemble_v2" in modes:
+                _, text_protos_mp = generate_multi_prompt_prototypes(
+                    proto_path, device, novel_class_names
+                )
+                if text_protos_mp is None:
+                    print("WARNING: Could not generate multi-prompt prototypes, skipping geo_ensemble_v2\n", flush=True)
+                    modes = [m for m in modes if m != "geo_ensemble_v2"]
         else:
             proto_data = torch.load(proto_path, map_location="cpu")
             text_protos_16 = proto_data["embeddings"].float().to(device)
@@ -604,7 +970,35 @@ def main():
             print(f"16-class prototypes: {text_protos_16.shape}", flush=True)
         if text_protos_22 is not None:
             print(f"22-class prototypes: {text_protos_22.shape}", flush=True)
+        if text_protos_mp is not None:
+            print(f"Multi-prompt prototypes: {text_protos_mp.shape}", flush=True)
         print(flush=True)
+
+    # Clear any CLIP remnants from GPU before loading panoptic models
+    torch.cuda.empty_cache()
+    print("CLIP unloaded, GPU cache cleared.", flush=True)
+
+    # ── Load panoptic models ──
+    print(f"Loading backbone from: {cfg['model']['backbone_ckpt']}", flush=True)
+    backbone = load_backbone(cfg["model"]["backbone_ckpt"], device)
+    print("  Backbone loaded.", flush=True)
+    print(f"Loading decoder from: {args.checkpoint}", flush=True)
+    decoder, has_token_head = load_decoder_flexible(cfg, args.checkpoint, device)
+    print(f"  Decoder loaded. Token head detected: {has_token_head}\n", flush=True)
+
+    # ── Filter modes based on capabilities ──
+    token_modes = {"token"}
+    if not has_token_head:
+        skipped = [m for m in modes if m in token_modes]
+        if skipped:
+            print(f"WARNING: No token_head — skipping modes: {skipped}\n", flush=True)
+        modes = [m for m in modes if m not in token_modes]
+
+    # ── Compute prototype bias for geo_ensemble_v2 ──
+    if "geo_ensemble_v2" in modes and text_protos_mp is not None:
+        print("Computing prototype bias (calibration on 50 samples)...", flush=True)
+        proto_bias = compute_prototype_bias(backbone, val_loader, text_protos_mp, device)
+        print(f"  Proto bias: {proto_bias}", flush=True)
 
     # ── Setup evaluators ──
     num_classes = cfg["model"]["num_classes"]
@@ -616,17 +1010,19 @@ def main():
         evaluators["linear"] = PanopticEval(n_classes=num_classes, min_points=min_points)
     if "token" in modes:
         evaluators["token"] = PanopticEval(n_classes=num_classes, min_points=min_points)
-    if "ensemble" in modes:
-        for a in alphas:
-            evaluators[f"ensemble_a{a:.1f}"] = PanopticEval(n_classes=num_classes, min_points=min_points)
-    if "token_openvocab" in modes:
-        evaluators["token_openvocab_known"] = PanopticEval(n_classes=num_classes, min_points=min_points)
-    if "backbone_openvocab" in modes:
-        evaluators["backbone_openvocab_known"] = PanopticEval(n_classes=num_classes, min_points=min_points)
+    if "backbone_pool_v2" in modes:
+        evaluators["backbone_pool_v2_known"] = PanopticEval(n_classes=num_classes, min_points=min_points)
+    if "geometric_ensemble" in modes:
+        for ga in geo_alphas:
+            evaluators[f"geo_ensemble_a{ga:.1f}"] = PanopticEval(n_classes=num_classes, min_points=min_points)
+    if "geo_ensemble_v2" in modes:
+        for ga in geo_alphas:
+            evaluators[f"geo_v2_a{ga:.1f}"] = PanopticEval(n_classes=num_classes, min_points=min_points)
 
     novel_stats_agg = {
-        "token_openvocab": {name: {"voxels": 0} for name in NOVEL_CLASS_NAMES},
-        "backbone_openvocab": {name: {"voxels": 0} for name in NOVEL_CLASS_NAMES},
+        "backbone_pool_v2": {name: {"voxels": 0} for name in novel_class_names},
+        "geometric_ensemble": {name: {"voxels": 0} for name in novel_class_names},
+        "geo_ensemble_v2": {name: {"voxels": 0} for name in novel_class_names},
     }
 
     # ── Evaluation loop ──
@@ -666,42 +1062,57 @@ def main():
                 sem_b, inst_b = panoptic_inference_token(pt, pm, text_protos_16.cpu(), overlap_thr)
                 evaluators["token"].addBatch(sem_b[valid], inst_b[valid], gt_sem[valid], gt_inst[valid])
 
-            # C: Ensemble alpha sweep
-            if "ensemble" in modes and pt is not None:
-                for a in alphas:
-                    sem_c, inst_c = panoptic_inference_ensemble(
-                        pl, pt, pm, text_protos_16.cpu(), num_classes, overlap_thr, alpha=a
-                    )
-                    evaluators[f"ensemble_a{a:.1f}"].addBatch(
-                        sem_c[valid], inst_c[valid], gt_sem[valid], gt_inst[valid]
-                    )
-
-            # D: Token-OpenVocab (22 classes) — MAIN OPEN-VOCAB TEST
-            if "token_openvocab" in modes and pt is not None:
-                sem_d, inst_d = panoptic_inference_token(pt, pm, text_protos_22.cpu(), overlap_thr)
-                # Track novel detections
-                stats_d = count_novel_detections(sem_d)
-                for name, s in stats_d.items():
-                    novel_stats_agg["token_openvocab"][name]["voxels"] += s["voxels"]
-                # Remap novel → ignore for known-class PQ
-                sem_d_known, inst_d_known = remap_novel_to_ignore(sem_d, inst_d, num_classes)
-                evaluators["token_openvocab_known"].addBatch(
-                    sem_d_known[valid], inst_d_known[valid], gt_sem[valid], gt_inst[valid]
+            # F: Backbone-Pool v2 (fixed) — normalized soft-pool
+            if "backbone_pool_v2" in modes:
+                backbone_feats_v = feats[0]  # (V, 768)
+                sem_f, inst_f = panoptic_inference_backbone_pool_v2(
+                    backbone_feats_v, pm.to(device), text_protos_22, overlap_thr, min_points
+                )
+                stats_f = count_novel_detections(sem_f, num_classes, novel_class_names)
+                for name, s in stats_f.items():
+                    novel_stats_agg["backbone_pool_v2"][name]["voxels"] += s["voxels"]
+                sem_f_known, inst_f_known = remap_novel_to_ignore(sem_f, inst_f, num_classes)
+                evaluators["backbone_pool_v2_known"].addBatch(
+                    sem_f_known[valid], inst_f_known[valid], gt_sem[valid], gt_inst[valid]
                 )
 
-            # E: Backbone pooling (22 classes) — baseline
-            if "backbone_openvocab" in modes:
-                backbone_feats_v = feats[0]  # (V, 768) raw backbone
-                sem_e, inst_e = panoptic_inference_backbone_pool(
-                    backbone_feats_v, pm.to(device), text_protos_22, overlap_thr
-                )
-                stats_e = count_novel_detections(sem_e)
-                for name, s in stats_e.items():
-                    novel_stats_agg["backbone_openvocab"][name]["voxels"] += s["voxels"]
-                sem_e_known, inst_e_known = remap_novel_to_ignore(sem_e, inst_e, num_classes)
-                evaluators["backbone_openvocab_known"].addBatch(
-                    sem_e_known[valid], inst_e_known[valid], gt_sem[valid], gt_inst[valid]
-                )
+            # G: Geometric Ensemble (Strategy E) — alpha sweep
+            if "geometric_ensemble" in modes:
+                backbone_feats_v = feats[0]  # (V, 768)
+                for ga in geo_alphas:
+                    sem_g, inst_g = panoptic_inference_geometric_ensemble(
+                        pl.to(device), pm.to(device), backbone_feats_v, text_protos_22,
+                        num_known=num_classes, overlap_thr=overlap_thr,
+                        alpha=ga, temperature=args.geo_temperature, min_mask_pts=min_points,
+                    )
+                    # Track novel for best alpha (use first alpha for aggregation)
+                    if ga == geo_alphas[0]:
+                        stats_g = count_novel_detections(sem_g, num_classes, novel_class_names)
+                        for name, s in stats_g.items():
+                            novel_stats_agg["geometric_ensemble"][name]["voxels"] += s["voxels"]
+                    sem_g_known, inst_g_known = remap_novel_to_ignore(sem_g, inst_g, num_classes)
+                    evaluators[f"geo_ensemble_a{ga:.1f}"].addBatch(
+                        sem_g_known[valid], inst_g_known[valid], gt_sem[valid], gt_inst[valid]
+                    )
+
+            # H: Geometric Ensemble v2 (multi-prompt + per-class temperature)
+            if "geo_ensemble_v2" in modes:
+                backbone_feats_v = feats[0]
+                for ga in geo_alphas:
+                    sem_h, inst_h = panoptic_inference_geometric_ensemble_v2(
+                        pl.to(device), pm.to(device), backbone_feats_v,
+                        text_protos_mp, proto_bias,
+                        num_known=num_classes, overlap_thr=overlap_thr,
+                        alpha=ga, temperature=args.geo_temperature, min_mask_pts=min_points,
+                    )
+                    if ga == geo_alphas[0]:
+                        stats_h = count_novel_detections(sem_h, num_classes, novel_class_names)
+                        for name, s in stats_h.items():
+                            novel_stats_agg["geo_ensemble_v2"][name]["voxels"] += s["voxels"]
+                    sem_h_known, inst_h_known = remap_novel_to_ignore(sem_h, inst_h, num_classes)
+                    evaluators[f"geo_v2_a{ga:.1f}"].addBatch(
+                        sem_h_known[valid], inst_h_known[valid], gt_sem[valid], gt_inst[valid]
+                    )
 
             if (i + 1) % 50 == 0:
                 print(f"  [{i+1}/{len(val_ds)}]", flush=True)
@@ -727,10 +1138,12 @@ def main():
 
         # Determine novel voxels for summary
         novel_total = "N/A"
-        if "openvocab" in name:
-            mode_key = name.replace("_known", "")
-            if mode_key in novel_stats_agg:
-                novel_total = sum(s["voxels"] for s in novel_stats_agg[mode_key].values())
+        # Match evaluator key to novel_stats_agg key
+        mode_key = name.replace("_known", "")
+        for agg_key in novel_stats_agg:
+            if mode_key.startswith(agg_key) or mode_key.startswith(agg_key.replace("_ensemble", "")):
+                novel_total = sum(s["voxels"] for s in novel_stats_agg[agg_key].values())
+                break
 
         summary_rows.append((name, PQ, SQ, RQ, iou_mean, novel_total))
 
@@ -758,26 +1171,38 @@ def main():
         nv_str = f"{novel:>12,d}" if isinstance(novel, int) else f"{'N/A':>12s}"
         print(f"  {name:<30s} {pq:8.4f} {sq:8.4f} {rq:8.4f} {iou:8.4f} {nv_str}", flush=True)
 
-    # Find best ensemble alpha
-    if "ensemble" in modes:
-        ensemble_keys = [k for k in results if k.startswith("ensemble_a")]
-        if ensemble_keys:
-            best_ens = max(ensemble_keys, key=lambda k: results[k]["PQ"])
-            print(f"\n  Best ensemble: {best_ens} (PQ={results[best_ens]['PQ']:.4f})", flush=True)
-            results["best_ensemble"] = {"name": best_ens, **results[best_ens]}
+    # Find best geometric ensemble alpha
+    if "geometric_ensemble" in modes:
+        geo_keys = [k for k in results if k.startswith("geo_ensemble_a")]
+        if geo_keys:
+            best_geo = max(geo_keys, key=lambda k: results[k]["PQ"])
+            print(f"  Best geo ensemble: {best_geo} (PQ={results[best_geo]['PQ']:.4f})", flush=True)
+            results["best_geo_ensemble"] = {"name": best_geo, **results[best_geo]}
 
-    # ── Novel detection comparison (D vs E) ──
-    if any(m in modes for m in ["token_openvocab", "backbone_openvocab"]):
+    # Find best geo ensemble v2 alpha
+    if "geo_ensemble_v2" in modes:
+        geo_v2_keys = [k for k in results if k.startswith("geo_v2_a")]
+        if geo_v2_keys:
+            best_geo_v2 = max(geo_v2_keys, key=lambda k: results[k]["PQ"])
+            print(f"  Best geo v2 (multi-prompt): {best_geo_v2} (PQ={results[best_geo_v2]['PQ']:.4f})", flush=True)
+            results["best_geo_v2"] = {"name": best_geo_v2, **results[best_geo_v2]}
+
+    # ── Novel detection comparison ──
+    openvocab_modes_active = [m for m in ["backbone_pool_v2", "geometric_ensemble",
+                                           "geo_ensemble_v2"] if m in modes]
+    if openvocab_modes_active:
         print(f"\n{'='*70}", flush=True)
-        print(f"  NOVEL CLASS DETECTIONS (D: Token-OpenVocab vs E: Backbone-Pool)", flush=True)
+        print(f"  NOVEL CLASS DETECTIONS", flush=True)
         print(f"{'='*70}", flush=True)
-        print(f"  {'Novel Class':<20s} {'Token-OV':>12s} {'Backbone-Pool':>14s} {'Winner':>10s}", flush=True)
-        print(f"  {'-'*60}", flush=True)
-        for name in NOVEL_CLASS_NAMES:
-            tv = novel_stats_agg["token_openvocab"].get(name, {}).get("voxels", 0) if "token_openvocab" in modes else 0
-            bv = novel_stats_agg["backbone_openvocab"].get(name, {}).get("voxels", 0) if "backbone_openvocab" in modes else 0
-            winner = "Token" if tv > bv else ("Backbone" if bv > tv else "Tie")
-            print(f"  {name:<20s} {tv:>12,d} {bv:>14,d} {winner:>10s}", flush=True)
+        header_modes = [m[:12] for m in openvocab_modes_active]
+        print(f"  {'Novel Class':<20s} " + " ".join(f"{h:>14s}" for h in header_modes), flush=True)
+        print(f"  {'-'*70}", flush=True)
+        for name in novel_class_names:
+            vals = []
+            for m in openvocab_modes_active:
+                v = novel_stats_agg.get(m, {}).get(name, {}).get("voxels", 0)
+                vals.append(v)
+            print(f"  {name:<20s} " + " ".join(f"{v:>14,d}" for v in vals), flush=True)
 
     # ── Save results ──
     with open(out_dir / "results.json", "w") as f:
@@ -785,7 +1210,7 @@ def main():
     print(f"\nSaved results.json to {out_dir}", flush=True)
 
     # Save novel detections
-    if any(m in modes for m in ["token_openvocab", "backbone_openvocab"]):
+    if openvocab_modes_active:
         with open(out_dir / "novel_detections.json", "w") as f:
             json.dump(novel_stats_agg, f, indent=2)
         print(f"Saved novel_detections.json to {out_dir}", flush=True)

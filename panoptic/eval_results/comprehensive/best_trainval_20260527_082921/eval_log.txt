@@ -1,0 +1,11 @@
+======================================================================
+  Comprehensive Panoptic Evaluation
+======================================================================
+  Config:     panoptic/configs/full_nuscenes_token_v2.yaml
+  Checkpoint: panoptic/checkpoints_token_full_v2/best.pth
+  Version:    v1.0-trainval
+  Modes:      ['linear', 'token', 'backbone_pool_v2', 'geometric_ensemble', 'geo_ensemble_v2']
+  Output:     panoptic/eval_results/comprehensive/best_trainval_20260527_082921
+======================================================================
+
+Loading NuScenes database (version=v1.0-trainval, dataroot=/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes)...

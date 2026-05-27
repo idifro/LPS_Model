@@ -111,3 +111,8 @@ checkpoint:
 inference:
   overlap_thr: 0.8
   min_points: 50
+
+# ── Open-Vocabulary (Strategy E) ──
+# Optional: novel classes for geometric ensemble evaluation.
+# If omitted, defaults to: ["police car", "ambulance", "trash cans", "pole", "bench"]
+# novel_classes: ["police car", "ambulance", "trash cans", "pole", "bench"]

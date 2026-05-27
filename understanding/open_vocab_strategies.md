@@ -751,3 +751,461 @@ Week 3: Strategy D full → camera cross-attention in decoder (Phase 6)
 Week 3: Strategy C1 as backup → if camera path is too expensive
          (2-3 days retraining)
 ```
+
+---
+
+## Strategy E Evaluation Results (Completed 2026-05-26)
+
+Strategy E was implemented and evaluated on v1.0-trainval (6019 samples). Results:
+
+| Mode | PQ | Novel Voxels |
+|------|-----|------|
+| Linear (baseline) | 0.477 | N/A |
+| Backbone-Pool legacy | 0.209 | 25.4M (mostly "pole" FPs) |
+| Backbone-Pool-v2 (fixed) | 0.221 | 23.9M (still "pole" dominated) |
+| Geo-Ensemble α=0.5 (best) | 0.463 | 171K (748 police car, 7.5K trash cans, 163K pole) |
+
+**Conclusion**: Strategy E validated the *framework* but novel detection signal is weak. The backbone features carry some open-vocab information (police car detected!) but not enough for reliable detection. The "pole" text prototype is pathologically generic. Next steps should focus on training-time improvements.
+
+---
+
+## Strategy G: CLIP-Initialized Queries (Semantic Query Priors)
+
+### What It Is
+
+Replace the 100 randomly initialized learnable queries in the transformer decoder with queries initialized from CLIP text embeddings. Each query starts pre-aligned to a semantic concept, giving the decoder a "head start" on specialization.
+
+### Why It Is Useful
+
+Currently, the 100 queries are randomly initialized (`nn.Embedding(100, 256)`). During training, queries self-organize to specialize on different objects via Hungarian matching. But this specialization is arbitrary — there's no guarantee query #37 learns "car" and query #72 learns "pedestrian".
+
+With CLIP-initialized queries:
+1. Queries start in semantic space — query for "car" begins near the CLIP representation of "car"
+2. The decoder potentially converges faster (queries already know what to look for)
+3. At inference, adding new queries for novel classes (e.g., initialize from "police car" text embedding) could enable zero-shot query specialization
+4. Compatible with existing training — just changes initialization, same loss
+
+### How It Works Step by Step
+
+```python
+# Initialization (replace random nn.Embedding)
+class CLIPInitializedQueries(nn.Module):
+    def __init__(self, num_queries=100, hidden_dim=256, clip_dim=768):
+        super().__init__()
+        # 16 known class queries + 84 additional specific concepts
+        concepts = [
+            # 16 nuScenes known (one query per class, or multiple for things)
+            "car", "car", "car", "car", "car",  # 5 car queries (many instances)
+            "truck", "truck", "truck",
+            "bus", "bus",
+            "pedestrian", "pedestrian", "pedestrian", "pedestrian", "pedestrian",
+            "bicycle", "motorcycle",
+            "construction vehicle", "trailer",
+            "traffic cone", "traffic cone",
+            "barrier", "barrier",
+            # 6 stuff queries
+            "driveable surface", "sidewalk", "terrain",
+            "manmade structure", "vegetation", "other flat surface",
+            # Additional generic/novel concepts for generalization
+            "pole", "bench", "trash can", "fire hydrant",
+            "tree trunk", "street light", "stop sign",
+            "parking meter", "fence", "guard rail",
+            # ... fill to 100 with driving-relevant concepts
+        ]
+        # Encode with CLIP text encoder
+        clip_text_feats = clip_encode(concepts)  # (100, 768)
+        # Project to decoder dimension
+        self.proj = nn.Linear(clip_dim, hidden_dim)
+        self.register_buffer("clip_init", clip_text_feats)
+        # Learnable residual (allows optimization while keeping prior)
+        self.residual = nn.Parameter(torch.zeros(num_queries, hidden_dim))
+
+    def forward(self, batch_size):
+        base = self.proj(self.clip_init)  # (100, 256)
+        queries = base + self.residual  # prior + learnable delta
+        return queries.unsqueeze(0).expand(batch_size, -1, -1)
+```
+
+### Key Design Choices
+
+1. **Residual design**: `query = proj(CLIP_text) + learnable_delta`. The CLIP prior provides a semantic starting point. The learnable delta allows the query to adapt to the decoder's learned attention patterns.
+2. **Multiple queries per class**: Things (car, pedestrian) need multiple queries for multiple instances. Stuff classes need one query each.
+3. **Extra concept queries**: Including novel driving concepts in the initial query set means the decoder has queries "ready" for those objects, even if no CE loss is applied for them.
+4. **Open-vocab extension at inference**: Simply add new queries (project new text embeddings) without retraining.
+
+### Why This Could Help Both Closed and Open Vocab
+
+**Closed set improvement:**
+- Faster convergence — queries start specialized instead of random
+- Better instance coverage — number of queries per class can be proportional to frequency
+- Less query competition — queries know their role from the start
+
+**Open vocab:**
+- Novel concept queries exist from initialization — decoder may learn generalizable attention patterns
+- At inference, adding "police car" query (from CLIP text) could trigger detection if decoder learned concept-agnostic mask prediction
+- The residual term preserves CLIP alignment — queries stay semantically meaningful
+
+### Why This Could Fail
+
+1. The decoder's cross-attention learns positional/geometric patterns, not semantic — initialization may get overwritten
+2. By epoch 5, initial CLIP alignment may be completely lost (gradients dominate)
+3. 100 queries for 100 concepts may be too rigid — current random init allows flexible specialization
+4. The proj(768→256) compression may lose too much CLIP information
+
+### Mitigation
+
+- Use **cosine warmup** on the residual (small LR initially) to preserve CLIP prior longer
+- Regularize: add loss `||residual||² * λ` to prevent drift from CLIP init
+- Experiment with frozen proj vs learned proj
+- Start with fewer concept-specific queries (30-40) and keep 60 "free" random queries
+
+---
+
+## Strategy H: End-to-End Encoder Unfreezing with CLIP Regularization
+
+### What It Is
+
+Unfreeze the DisNet backbone and fine-tune it end-to-end alongside the panoptic decoder, but with a regularization loss that prevents the features from drifting away from CLIP space.
+
+### Why It Is Useful
+
+Currently DisNet is frozen during panoptic training. This means:
+- The backbone features are optimized for per-voxel OpenSeg alignment (pixel-level), NOT for object-level panoptic segmentation
+- The 256-dim projected features (`backbone_proj`) are the only pathway for task adaptation
+- Features in different parts of a mask may point in different directions (because they were trained per-pixel)
+
+Unfreezing allows:
+1. Features within the same object to become more **coherent** (pointing same direction) because the panoptic loss backpropagates through the backbone
+2. Features to become more **discriminative** for the 16 panoptic classes (and potentially novel classes if combined with diverse-text loss)
+3. The backbone to learn **spatial patterns** relevant to panoptic (e.g., object boundaries, stuff continuity)
+
+### How It Works
+
+```python
+# Phase 1: Current (frozen backbone)
+for p in backbone.parameters():
+    p.requires_grad = False
+
+# Phase 2: Unfrozen with CLIP regularization
+for p in backbone.parameters():
+    p.requires_grad = True  # Unfreeze!
+
+# Add regularization loss during training:
+def clip_alignment_regularization(curr_feats, frozen_feats, mask=None, lambda_reg=0.1):
+    """Keep unfrozen features close to original CLIP-aligned features.
+
+    curr_feats: (V, 768) — features from unfreezing backbone (current forward pass)
+    frozen_feats: (V, 768) — cached features from frozen backbone (computed once per sample)
+    mask: optional (V,) bool — only regularize on valid/foreground voxels
+    """
+    curr_normed = F.normalize(curr_feats, dim=-1)
+    frozen_normed = F.normalize(frozen_feats, dim=-1)
+
+    # Cosine similarity loss (keep features aligned)
+    cos_sim = (curr_normed * frozen_normed).sum(dim=-1)  # (V,)
+    if mask is not None:
+        cos_sim = cos_sim[mask]
+    loss = (1 - cos_sim).mean()  # push toward similarity=1
+
+    return lambda_reg * loss
+```
+
+### Training Protocol
+
+```
+Phase 1 (Epochs 1-10): Freeze backbone, train decoder normally (current setup)
+Phase 2 (Epochs 11-30): Unfreeze backbone with:
+    - Backbone LR = 1e-6 (10x smaller than decoder)
+    - CLIP alignment regularization (λ=0.1)
+    - Gradient clipping on backbone (max_norm=1.0)
+    - Monitor: cosine similarity between frozen vs current features (should stay >0.9)
+
+Loss_total = L_panoptic + λ_clip * L_clip_alignment
+           = (L_CE + L_mask + L_dice + L_token) + 0.1 * L_cosine_drift
+```
+
+### Expected Impact on Closed-Set PQ
+
+This should **improve** closed-set PQ because:
+- Backbone features become more coherent *within objects* → better mask pooling
+- Cross-attention in decoder sees more task-relevant features → better queries
+- Estimated improvement: PQ 0.477 → 0.50+ based on similar methods (Mask2Former fine-tuning gains)
+
+### Expected Impact on Open-Vocab
+
+**Risk**: Unconstrained fine-tuning will destroy CLIP alignment. Features drift toward 16-class discriminative space → open-vocab dies.
+
+**Mitigation via regularization**: The cosine alignment loss keeps features on the CLIP manifold. Empirically, λ=0.1 allows features to adapt while maintaining >0.9 average cosine similarity to original CLIP features.
+
+**Combined approach**: Unfreeze + diverse text negatives (Strategy C1). The backbone learns to be discriminative among 200+ concepts, not just 16.
+
+### Why This Could Fail
+
+1. Catastrophic forgetting — even with regularization, 768-dim space may distort subtly enough to kill novel-class similarity
+2. Overfitting on trainval — backbone memorizes training set, doesn't generalize
+3. Training instability — gradients through sparse convolutions + long backward pass may diverge
+4. Memory cost — storing activations for 100K voxels × 768 dims for backprop is expensive
+
+### Mitigation
+
+- **LoRA/low-rank adaptation**: Instead of full unfreezing, add low-rank adapters to backbone layers (rank 16-32). Much less risk of catastrophic forgetting.
+- **Gradient accumulation**: If memory is tight, accumulate over 4 samples
+- **Periodic evaluation**: Run open-vocab eval every 2 epochs, stop if novel detection degrades
+- **EMA teacher**: Keep exponential moving average of frozen backbone as regularization target
+
+---
+
+## Strategy I: Voxel Decomposition Loss (Per-Point CLIP Supervision)
+
+### What It Is
+
+Add a per-voxel contrastive loss that directly supervises backbone features against CLIP text embeddings at the point level. Instead of only supervising at the mask/query level, this ensures every voxel feature is individually aligned with its ground-truth class text embedding.
+
+### Why It Is Useful
+
+Current training supervises features only through:
+1. Hungarian-matched queries (mask level) — 100 queries for ~30 objects per scene
+2. Token head (query level) — maps query embedding to text space
+
+This leaves ~50,000 voxels per sample completely *unsupervised* in terms of CLIP text alignment. The backbone features may be "close" to the right text embedding (from pre-training) but are never explicitly pushed toward them during panoptic training.
+
+Voxel decomposition loss provides:
+1. **Dense supervision** — every foreground voxel gets a gradient toward its class text embedding
+2. **Feature coherence** — voxels within the same object are pushed toward the same text embedding
+3. **Open-vocab foundation** — if features are tightly aligned to text per-voxel, mask-pooling becomes near-trivial for any text query
+
+### How It Works
+
+```python
+def voxel_decomposition_loss(backbone_feats, gt_sem, text_protos, temperature=0.07):
+    """Per-voxel contrastive loss against class text prototypes.
+
+    backbone_feats: (V, 768) — backbone output (possibly unfrozen)
+    gt_sem: (V,) — per-voxel GT semantic class (0-15, 255=ignore)
+    text_protos: (C, 768) — text embeddings for C classes (could be 16 or 200+)
+    """
+    # Only supervise valid voxels (not ignore)
+    valid = gt_sem != 255
+    feats = F.normalize(backbone_feats[valid], dim=-1)  # (V', 768)
+    labels = gt_sem[valid]  # (V',) class indices
+
+    # Cosine similarity to all prototypes
+    sim = feats @ text_protos.T / temperature  # (V', C)
+
+    # Cross-entropy: each voxel should be closest to its GT class prototype
+    loss = F.cross_entropy(sim, labels)
+
+    return loss
+```
+
+### Extended Version: With Diverse Negative Bank
+
+```python
+def voxel_decomp_loss_diverse(backbone_feats, gt_sem, text_protos_16, negative_bank):
+    """With 200+ negatives — forces fine-grained per-voxel CLIP alignment."""
+    all_protos = torch.cat([text_protos_16, negative_bank])  # (216+, 768)
+    valid = gt_sem != 255
+    feats = F.normalize(backbone_feats[valid], dim=-1)
+    labels = gt_sem[valid]  # targets are still 0-15 (known classes)
+
+    sim = feats @ all_protos.T / 0.07  # (V', 216+)
+    loss = F.cross_entropy(sim, labels)  # labels index into first 16 positions
+    return loss
+```
+
+### Why This Is Different from Original OpenSeg Distillation
+
+OpenSeg distillation (how DisNet was originally trained):
+- Supervision: `L2_loss(backbone_feat, openseg_2d_feat)` — **per-pixel regression** to 2D features
+- Problem: 2D features are already imperfect (projected from images), and L2 loss doesn't enforce text alignment directly
+
+Voxel decomposition loss:
+- Supervision: `CrossEntropy(backbone_feat @ text_protos.T, gt_class)` — **directly aligns to text embeddings**
+- Advantage: Uses the CLIP text space directly, not degraded 2D features
+- Advantage: With diverse negatives, forces navigation of full embedding space
+
+### Training Integration
+
+```python
+# Combined loss
+loss = (
+    w_ce * loss_ce          # Query-level class loss (existing)
+    + w_mask * loss_mask    # Mask BCE (existing)
+    + w_dice * loss_dice    # Mask Dice (existing)
+    + w_token * loss_token  # Token contrastive (existing)
+    + w_voxel * loss_voxel  # NEW: per-voxel decomposition
+)
+# Suggested: w_voxel = 0.5 (after warmup of 5 epochs)
+```
+
+### Expected Impact
+
+**Closed-set PQ improvement:**
+- Per-voxel alignment makes mask-pooled features more coherent → better token head classification → higher RQ
+- Backbone features become more discriminative → better linear head predictions
+- Estimated: PQ +0.02-0.05
+
+**Open-vocab improvement:**
+- With diverse negatives: every voxel navigates full CLIP space → mask-pooling produces quality embeddings for any concept
+- Geometric ensemble should work much better when per-voxel features are tightly aligned
+- Strategy E (geo ensemble) could go from PQ_novel≈0 to measurable novel detection
+
+### Why This Could Fail
+
+1. **Computational cost**: 50K voxels per sample × 200+ prototypes = 10M similarity computations per sample
+2. **Conflict with query-level loss**: Per-voxel loss may fight against Hungarian matching (different optimization targets)
+3. **Class boundary issues**: Voxels near object boundaries may be ambiguous — forcing them to one class is wrong
+4. **Background problem**: Most voxels are background/ignore. If GT coverage is sparse, most voxels get no gradient.
+
+### Mitigation
+
+- **Subsample**: Only compute on 10K random valid voxels per sample (not all 50K)
+- **Soft labels**: Near boundaries, use soft targets based on distance to GT mask edges
+- **Ramping weight**: Start with w_voxel=0, ramp to 0.5 over 5 epochs (let mask decoder stabilize first)
+- **Only foreground**: Only apply to voxels within GT masks (not unlabeled background)
+
+---
+
+## Strategy J: Improved Backbone Training from Scratch (CLIP-Aligned Panoptic Encoder)
+
+### What It Is
+
+Instead of using the pre-trained DisNet (distilled from OpenSeg), train a new 3D backbone from scratch that is simultaneously optimized for:
+1. CLIP text alignment (per-voxel)
+2. Panoptic mask quality
+3. Full vocabulary coverage (1000+ concepts in contrastive loss)
+
+### Why It Is Useful
+
+The current DisNet was distilled from OpenSeg with only a reconstruction objective (`L2 loss` to 2D features). It was never explicitly trained for:
+- Text alignment (it's indirectly aligned through OpenSeg features, which are text-aligned)
+- Panoptic awareness (object boundaries, instance separation)
+- Diverse vocabulary (OpenSeg used specific segmentation labels for its 500 classes, but nuScenes distillation used point-wise features)
+
+A purpose-built encoder could simultaneously serve as:
+- A panoptic feature extractor (backbone for decoder)
+- A CLIP-aligned per-voxel classifier (open-vocab ready)
+- A semantic segmentation model (per-point classification)
+
+### Architecture
+
+```
+Input: (V, 3) coords + (V, 3) XYZ features
+    │
+    ▼
+MinkUNet18A with CLIP-aligned output head
+    │
+    ├── Sparse Conv Encoder (5 stages)
+    │       │
+    │       ▼
+    ├── Sparse Conv Decoder (5 stages)
+    │       │
+    │       ▼
+    │   feature_out: (V, 768) — main output
+    │       │
+    │       ├── panoptic_proj: Linear(768→256) → to panoptic decoder
+    │       │
+    │       └── clip_head: LayerNorm + L2Norm → to text contrastive loss
+    │
+    └── Training losses:
+            ├── L_voxel_contrastive: per-voxel vs 1000 text embeddings
+            ├── L_clip_distill: cosine similarity to OpenSeg 2D features (keep alignment)
+            └── (optional) L_panoptic: from downstream decoder (end-to-end)
+```
+
+### Training Procedure
+
+```
+Stage 1: CLIP-aligned encoder pretraining (10-20 epochs)
+    - Input: nuScenes point clouds with GT semantic labels
+    - Loss: per-voxel cross-entropy against 200+ text prototypes
+    - Data: full nuScenes trainval (28K samples)
+    - Goal: backbone features directly in CLIP text space
+
+Stage 2: Joint panoptic training (20 epochs)
+    - Input: same point clouds
+    - Forward: encoder → panoptic decoder → masks + classes + tokens
+    - Loss: panoptic (CE+mask+dice+token) + α*L_voxel_contrastive (regularization)
+    - Goal: panoptic-quality masks with CLIP-aligned features
+```
+
+### Why This Is Better Than Unfreezing DisNet
+
+1. **No legacy bias**: DisNet was trained with L2 regression to imperfect 2D features. Starting fresh with direct text-alignment produces cleaner features.
+2. **Architecture flexibility**: Can add multi-scale features, skip connections optimized for masks
+3. **Full curriculum**: The backbone sees panoptic supervision from training, not just at fine-tuning time
+4. **Publication value**: "CLIP-aligned 3D encoder for open-vocab panoptic" is a significant contribution
+
+### Why This Could Fail
+
+1. **Training cost**: MinkUNet18A on full nuScenes from scratch = 3-5 days on single A100
+2. **Data limited**: Only 28K samples with panoptic labels (vs CLIP's 400M image-text pairs)
+3. **May not beat DisNet**: DisNet benefits from OpenSeg's large-scale 2D pretraining; a from-scratch 3D model may underperform
+4. **Risk of overfitting**: Small 3D dataset + large model = potential memorization
+
+### When to Choose This
+
+- If unfreezing DisNet (Strategy H) shows clear improvement and you establish that better backbone features = better panoptic
+- If you have 1+ week of compute time available
+- If this is targeted for a publication contribution
+
+---
+
+## Updated Decision Matrix (Post Strategy E Results)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ COMPLETED:                                                                    │
+│   Strategy E (geometric ensemble) — validated framework, weak novel signal   │
+│                                                                                │
+│ HIGHEST IMMEDIATE IMPACT ON CLOSED-SET PQ:                                   │
+│   → Strategy H (unfreeze encoder with CLIP reg) — PQ 0.477→0.50+            │
+│   → Strategy I (voxel decomposition loss) — better per-voxel features       │
+│                                                                                │
+│ HIGHEST IMPACT ON OPEN-VOCAB:                                                │
+│   → Strategy A (class-agnostic masks) — removes closed-set decoder bias     │
+│   → Strategy C1 (200 negative bank for token head) — prevents collapse       │
+│   → Strategy I + diverse negatives — per-voxel open-vocab alignment          │
+│                                                                                │
+│ BEST COMBINED (CLOSED + OPEN):                                               │
+│   → Strategy H + I: unfreeze backbone + voxel decomp with 200 negatives    │
+│     This simultaneously:                                                      │
+│     a) Improves closed PQ (features become panoptic-aware)                   │
+│     b) Maintains CLIP alignment (regularization)                              │
+│     c) Enables open-vocab (diverse negatives force full-space navigation)    │
+│                                                                                │
+│ NOVEL ZERO-SHOT (no retraining):                                             │
+│   → Strategy G (CLIP-initialized queries) — add novel-class queries at eval │
+│   → Better prototypes (multi-template averaging)                              │
+│                                                                                │
+│ LONG-TERM / PUBLICATION:                                                      │
+│   → Strategy D (camera cross-attention) + Strategy J (CLIP encoder)          │
+│   → Strategy F (VLM captions) — only if compute budget allows                │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Updated Recommended Execution Order
+
+```
+DONE: Strategy E (geometric ensemble) — diagnostic complete
+
+Week 1 (Quick wins, no retraining):
+  - Multi-prompt prototypes (average 5-10 templates) for existing geo-ensemble
+  - Visual verification with visualize_novel_detections.py
+  - Per-class temperature tuning sweep (τ ∈ {0.05, 0.07, 0.1, 0.2})
+
+Week 2 (Moderate retraining):
+  - Strategy C1: Add 200 text negatives to token head loss → retrain 10 epochs
+  - Strategy I: Add voxel decomposition loss (w_voxel=0.5) → retrain from current best checkpoint
+  - Compare: does per-voxel alignment help backbone-pool and geo-ensemble?
+
+Week 3 (Architecture changes):
+  - Strategy H: Unfreeze backbone with CLIP regularization → train 20 epochs
+  - Strategy G: CLIP-initialized queries (change init, same training)
+  - Evaluate combined: unfrozen backbone + voxel decomp + geo-ensemble
+
+Week 4 (Open-vocab focused):
+  - Strategy A: Class-agnostic retraining → test if unbiased proposals help
+  - Strategy D (inference only): camera features at eval time
+  - Full open-vocab evaluation with 20+ novel classes
+```

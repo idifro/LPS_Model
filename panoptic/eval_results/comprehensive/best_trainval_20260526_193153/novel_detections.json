@@ -1,0 +1,70 @@
+{
+  "token_openvocab": {
+    "police car": {
+      "voxels": 0
+    },
+    "ambulance": {
+      "voxels": 0
+    },
+    "trash cans": {
+      "voxels": 0
+    },
+    "pole": {
+      "voxels": 0
+    },
+    "bench": {
+      "voxels": 0
+    }
+  },
+  "backbone_openvocab": {
+    "police car": {
+      "voxels": 0
+    },
+    "ambulance": {
+      "voxels": 0
+    },
+    "trash cans": {
+      "voxels": 45202
+    },
+    "pole": {
+      "voxels": 25360750
+    },
+    "bench": {
+      "voxels": 0
+    }
+  },
+  "backbone_pool_v2": {
+    "police car": {
+      "voxels": 0
+    },
+    "ambulance": {
+      "voxels": 0
+    },
+    "trash cans": {
+      "voxels": 42018
+    },
+    "pole": {
+      "voxels": 23878854
+    },
+    "bench": {
+      "voxels": 0
+    }
+  },
+  "geometric_ensemble": {
+    "police car": {
+      "voxels": 748
+    },
+    "ambulance": {
+      "voxels": 0
+    },
+    "trash cans": {
+      "voxels": 7497
+    },
+    "pole": {
+      "voxels": 162804
+    },
+    "bench": {
+      "voxels": 0
+    }
+  }
+}
