@@ -1,15 +1,41 @@
-# Please cite "4D Spatio-Temporal ConvNets: Minkowski Convolutional Neural
-# Networks", CVPR'19 (https://arxiv.org/abs/1904.08755) if you use any part
-# of the code.
+"""Voxelization utility functions for hashing and quantizing 3D coordinates.
+
+This module provides hash functions (FNV-1a and ravel-based) and a
+``sparse_quantize`` routine used by the Voxelizer class to convert
+continuous point-cloud coordinates into unique discrete voxel indices.
+Originally from the Minkowski Engine codebase accompanying the paper
+"4D Spatio-Temporal ConvNets: Minkowski Convolutional Neural Networks"
+(CVPR 2019, https://arxiv.org/abs/1904.08755).
+"""
+
 import torch
 import numpy as np
 from collections import Sequence
 
 
 def fnv_hash_vec(arr):
-    '''
-    FNV64-1A
-    '''
+    """Compute FNV64-1A hashes for each row of a 2D integer coordinate array.
+
+    Used by ``sparse_quantize`` when ``hash_type='fnv'`` to produce a unique
+    hash per voxel coordinate, enabling fast duplicate detection via
+    ``np.unique``. The FNV-1a variant multiplies by the FNV prime then
+    XORs each coordinate column into the running hash.
+
+    Steps:
+        1. Cast the input array to uint64.
+        2. Initialize each row's hash to the FNV offset basis (14695981039346656037).
+        3. For each column, multiply the hash by the FNV prime (1099511628211)
+           and XOR with the column value.
+        4. Return the resulting per-row hash array.
+
+    Args:
+        arr (numpy.ndarray): A 2D integer array of shape (N, D) representing
+            N discretized coordinates in D dimensions.
+
+    Returns:
+        numpy.ndarray: A 1D uint64 array of shape (N,) containing the
+            FNV64-1A hash for each row.
+    """
     assert arr.ndim == 2
     # Floor first for negative coordinates
     arr = arr.copy()
@@ -23,9 +49,28 @@ def fnv_hash_vec(arr):
 
 
 def ravel_hash_vec(arr):
-    '''
-    Ravel the coordinates after subtracting the min coordinates.
-    '''
+    """Compute a ravel-style hash for each row of a 2D integer coordinate array.
+
+    Used by ``sparse_quantize`` when ``hash_type='ravel'`` (the default) to
+    map multi-dimensional voxel coordinates to unique 1D keys. This is
+    analogous to ``np.ravel_multi_index`` but operates in Fortran order and
+    handles negative coordinates by shifting all values to non-negative.
+
+    Steps:
+        1. Subtract the per-column minimum so all values are >= 0.
+        2. Cast to uint64 and compute the per-column max + 1 as the radix.
+        3. Accumulate a mixed-radix representation by iterating over columns
+           in Fortran (column-major) order: ``key = key * radix + column``.
+        4. Return the resulting per-row hash array.
+
+    Args:
+        arr (numpy.ndarray): A 2D integer array of shape (N, D) representing
+            N discretized coordinates in D dimensions.
+
+    Returns:
+        numpy.ndarray: A 1D uint64 array of shape (N,) containing the
+            ravel hash for each row.
+    """
     assert arr.ndim == 2
     arr = arr.copy()
     arr -= arr.min(0)

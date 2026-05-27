@@ -1,3 +1,16 @@
+"""3D point cloud augmentation transforms for sparse tensor data.
+
+This module provides feature-space and coordinate-space augmentation
+transforms designed for 3D point cloud processing pipelines. Feature
+transforms (chromatic translation, auto-contrast, jitter, hue-saturation)
+operate on per-point RGB colour channels, while coordinate transforms
+(random horizontal flip, elastic distortion) operate on XYZ positions.
+
+All transforms follow the ``__call__(coords, feats, labels)`` convention
+so they can be composed via the :class:`Compose` helper. They are used
+in the dataset loading stage before voxelisation / sparse-tensor creation.
+"""
+
 import random
 
 import logging
@@ -16,15 +29,51 @@ import torch
 # Feature transformations
 ##############################
 class ChromaticTranslation(object):
-    '''Add random color to the image, input must be an array in [0,255] or a PIL image'''
+    """Apply a uniform random colour translation to point cloud RGB features.
+
+    A single random offset vector is sampled and added to every point's RGB
+    channels, which shifts the overall colour tone of the scene. This is a
+    feature-space augmentation that helps the model become invariant to
+    global illumination changes.
+
+    The transform is applied with 95 % probability; otherwise the input is
+    returned unchanged. Results are clipped to [0, 255].
+
+    Args:
+        trans_range_ratio (float): Controls the magnitude of the translation.
+            The offset per channel is ``255 * 2 * trans_range_ratio * U``
+            where ``U ~ Uniform(-0.5, 0.5)``.
+    """
 
     def __init__(self, trans_range_ratio=1e-1):
-        '''
-        trans_range_ratio: ratio of translation i.e. 255 * 2 * ratio * rand(-0.5, 0.5)
-        '''
+        """Initialise ChromaticTranslation with the given range ratio.
+
+        Stores the translation range ratio that governs the maximum
+        colour shift applied to point features during augmentation.
+
+        Args:
+            trans_range_ratio (float): Ratio controlling the magnitude of
+                the random colour offset. Default is ``0.1``.
+        """
         self.trans_range_ratio = trans_range_ratio
 
     def __call__(self, coords, feats, labels):
+        """Apply the chromatic translation to point cloud features.
+
+        With 95 % probability, a single random 3-channel offset is sampled
+        and added to the RGB columns of ``feats``. Values are clipped to
+        the valid [0, 255] range.
+
+        Args:
+            coords (np.ndarray): Point coordinates of shape ``(N, 3)``.
+            feats (np.ndarray): Point features of shape ``(N, C)`` where
+                the first 3 columns are RGB in [0, 255].
+            labels (np.ndarray): Per-point labels of shape ``(N,)``.
+
+        Returns:
+            tuple: ``(coords, feats, labels)`` with ``feats`` potentially
+            modified in-place.
+        """
         if random.random() < 0.95:
             tr = (np.random.rand(1, 3) - 0.5) * 255 * 2 * self.trans_range_ratio
             feats[:, :3] = np.clip(tr + feats[:, :3], 0, 255)
@@ -32,12 +81,51 @@ class ChromaticTranslation(object):
 
 
 class ChromaticAutoContrast(object):
+    """Stretch per-channel intensity range to [0, 255] and blend with the original.
+
+    This augmentation computes a contrast-enhanced version of the point
+    features by linearly rescaling each RGB channel so that the minimum
+    maps to 0 and the maximum maps to 255. The enhanced result is blended
+    with the original features using a configurable (or random) blend
+    factor. Applied with 20 % probability.
+
+    Used as a feature-space augmentation in 3D scene understanding
+    pipelines to improve robustness to varying contrast conditions.
+    """
 
     def __init__(self, randomize_blend_factor=True, blend_factor=0.5):
+        """Initialise ChromaticAutoContrast.
+
+        Stores blending parameters that control how strongly the
+        contrast-stretched features replace the originals.
+
+        Args:
+            randomize_blend_factor (bool): If ``True``, sample a uniform
+                random blend factor in [0, 1] at each call. Default ``True``.
+            blend_factor (float): Fixed blend factor used when
+                ``randomize_blend_factor`` is ``False``. Default ``0.5``.
+        """
         self.randomize_blend_factor = randomize_blend_factor
         self.blend_factor = blend_factor
 
     def __call__(self, coords, feats, labels):
+        """Apply auto-contrast augmentation to the point cloud features.
+
+        With 20 % probability, rescales each RGB channel of ``feats``
+        so the per-channel min is 0 and max is 255, then blends the
+        rescaled result with the original using the configured blend
+        factor.
+
+        Args:
+            coords (np.ndarray): Point coordinates, shape ``(N, 3)``.
+            feats (np.ndarray): Point features, shape ``(N, C)``; first
+                3 columns are RGB in [0, 255].
+            labels (np.ndarray): Per-point labels, shape ``(N,)``.
+
+        Returns:
+            tuple: ``(coords, feats, labels)`` with ``feats`` possibly
+            modified.
+        """
         if random.random() < 0.2:
             # mean = np.mean(feats, 0, keepdims=True)
             # std = np.std(feats, 0, keepdims=True)
@@ -56,11 +144,42 @@ class ChromaticAutoContrast(object):
 
 
 class ChromaticJitter(object):
+    """Add per-point Gaussian noise to RGB features.
+
+    Samples independent Gaussian noise for every point and adds it to the
+    first three feature channels (RGB). This simulates sensor noise and
+    minor colour variations, encouraging the model to be robust to small
+    colour perturbations. Applied with 95 % probability.
+    """
 
     def __init__(self, std=0.01):
+        """Initialise ChromaticJitter with the given noise standard deviation.
+
+        The actual noise magnitude in colour-space is ``std * 255``.
+
+        Args:
+            std (float): Standard deviation of the noise relative to the
+                [0, 1] colour range. Default ``0.01``.
+        """
         self.std = std
 
     def __call__(self, coords, feats, labels):
+        """Apply per-point Gaussian colour jitter.
+
+        With 95 % probability, independent Gaussian noise scaled by
+        ``self.std * 255`` is added to every point's RGB channels.
+        Results are clipped to [0, 255].
+
+        Args:
+            coords (np.ndarray): Point coordinates, shape ``(N, 3)``.
+            feats (np.ndarray): Point features, shape ``(N, C)``; first
+                3 columns are RGB in [0, 255].
+            labels (np.ndarray): Per-point labels, shape ``(N,)``.
+
+        Returns:
+            tuple: ``(coords, feats, labels)`` with ``feats`` possibly
+            modified in-place.
+        """
         if random.random() < 0.95:
             noise = np.random.randn(feats.shape[0], 3)
             noise *= self.std * 255
@@ -69,12 +188,35 @@ class ChromaticJitter(object):
 
 
 class HueSaturationTranslation(object):
+    """Randomly shift hue and scale saturation of point cloud RGB features.
+
+    Converts the first three feature columns from RGB to HSV, applies a
+    random additive hue shift and multiplicative saturation scaling, then
+    converts back to RGB. This augmentation increases colour diversity and
+    helps the model generalise across different lighting conditions.
+
+    The conversion follows the algorithm from Python's ``colorsys`` module
+    but is vectorised with NumPy for efficiency on large point clouds.
+    """
 
     @staticmethod
     def rgb_to_hsv(rgb):
-        # Translated from source of colorsys.rgb_to_hsv
-        # r,g,b should be a numpy arrays with values between 0 and 255
-        # rgb_to_hsv returns an array of floats between 0.0 and 1.0.
+        """Convert an array of RGB values to HSV colour space.
+
+        Implements the same algorithm as ``colorsys.rgb_to_hsv`` but in a
+        fully vectorised NumPy form. R, G, B values are expected in
+        [0, 255]; the returned H and S are in [0, 1] and V is in
+        [0, 255]. An optional alpha channel (column index 3+) is
+        preserved unchanged.
+
+        Args:
+            rgb (np.ndarray): Array of shape ``(N, 3)`` or ``(N, 4+)``
+                with RGB (and optionally alpha) values in [0, 255].
+
+        Returns:
+            np.ndarray: HSV array of the same shape as ``rgb`` with H in
+            [0, 1], S in [0, 1], and V in [0, 255].
+        """
         rgb = rgb.astype('float')
         hsv = np.zeros_like(rgb)
         # in case an RGBA array was passed, just copy the A channel
@@ -97,10 +239,21 @@ class HueSaturationTranslation(object):
 
     @staticmethod
     def hsv_to_rgb(hsv):
-        # Translated from source of colorsys.hsv_to_rgb
-        # h,s should be a numpy arrays with values between 0.0 and 1.0
-        # v should be a numpy array with values between 0.0 and 255.0
-        # hsv_to_rgb returns an array of uints between 0 and 255.
+        """Convert an array of HSV values back to RGB colour space.
+
+        Implements the inverse of :meth:`rgb_to_hsv` using the same
+        vectorised approach. H and S are expected in [0, 1], V in
+        [0, 255]. Any alpha channel beyond column index 2 is copied
+        through unchanged.
+
+        Args:
+            hsv (np.ndarray): Array of shape ``(N, 3)`` or ``(N, 4+)``
+                with H in [0, 1], S in [0, 1], V in [0, 255].
+
+        Returns:
+            np.ndarray: RGB uint8 array of the same shape with values in
+            [0, 255].
+        """
         rgb = np.empty_like(hsv)
         rgb[..., 3:] = hsv[..., 3:]
         h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
@@ -117,11 +270,39 @@ class HueSaturationTranslation(object):
         return rgb.astype('uint8')
 
     def __init__(self, hue_max, saturation_max):
+        """Initialise HueSaturationTranslation with range limits.
+
+        Stores the maximum hue shift and saturation scaling factor used
+        when augmenting point cloud colour features.
+
+        Args:
+            hue_max (float): Maximum absolute hue shift in [0, 1].
+                The actual shift is sampled uniformly from
+                ``[-hue_max, hue_max]``.
+            saturation_max (float): Maximum relative saturation change.
+                The saturation is multiplied by a factor sampled
+                uniformly from ``[1 - saturation_max, 1 + saturation_max]``.
+        """
         self.hue_max = hue_max
         self.saturation_max = saturation_max
 
     def __call__(self, coords, feats, labels):
-        # Assume feat[:, :3] is rgb
+        """Apply random hue shift and saturation scaling to RGB features.
+
+        Converts ``feats[:, :3]`` from RGB to HSV, adds a random hue
+        offset, multiplies saturation by a random factor, converts back
+        to RGB, and clips results to [0, 255].
+
+        Args:
+            coords (np.ndarray): Point coordinates, shape ``(N, 3)``.
+            feats (np.ndarray): Point features, shape ``(N, C)``; first
+                3 columns are RGB in [0, 255].
+            labels (np.ndarray): Per-point labels, shape ``(N,)``.
+
+        Returns:
+            tuple: ``(coords, feats, labels)`` with augmented RGB in
+            ``feats[:, :3]``.
+        """
         hsv = HueSaturationTranslation.rgb_to_hsv(feats[:, :3])
         hue_val = (random.random() - 0.5) * 2 * self.hue_max
         sat_ratio = 1 + (random.random() - 0.5) * 2 * self.saturation_max
@@ -136,11 +317,31 @@ class HueSaturationTranslation(object):
 # Coordinate transformations
 ##############################
 class RandomHorizontalFlip(object):
+    """Randomly flip point cloud coordinates along horizontal axes.
+
+    For each horizontal axis (all spatial axes except the designated
+    upright axis), the coordinates are independently reflected with 50 %
+    probability. This is a coordinate-space augmentation that helps the
+    model become invariant to mirror symmetries of indoor/outdoor scenes.
+
+    Applied with an outer 95 % probability gate; if that gate fails the
+    input is returned unchanged.
+    """
 
     def __init__(self, upright_axis, is_temporal):
-        '''
-        upright_axis: axis index among x,y,z, i.e. 2 for z
-        '''
+        """Initialise RandomHorizontalFlip.
+
+        Determines which spatial axes are horizontal (i.e. not the
+        upright axis) and therefore eligible for flipping. Supports an
+        optional temporal dimension.
+
+        Args:
+            upright_axis (str): One of ``'x'``, ``'y'``, ``'z'``
+                identifying the gravity-aligned axis that should *not*
+                be flipped.
+            is_temporal (bool): If ``True``, the coordinate tensor has 4
+                columns (x, y, z, t) instead of 3.
+        """
         self.is_temporal = is_temporal
         self.D = 4 if is_temporal else 3
         self.upright_axis = {'x': 0, 'y': 1, 'z': 2}[upright_axis.lower()]
@@ -148,6 +349,22 @@ class RandomHorizontalFlip(object):
         self.horz_axes = set(range(self.D)) - set([self.upright_axis])
 
     def __call__(self, coords, feats, labels):
+        """Flip point coordinates along randomly chosen horizontal axes.
+
+        With 95 % outer probability, iterates over each horizontal axis
+        and independently flips it with 50 % probability by reflecting
+        coordinates around the axis maximum: ``x' = max(x) - x``.
+
+        Args:
+            coords (np.ndarray): Point coordinates, shape ``(N, D)``
+                where ``D`` is 3 or 4 (if temporal).
+            feats (np.ndarray): Point features, shape ``(N, C)``.
+            labels (np.ndarray): Per-point labels, shape ``(N,)``.
+
+        Returns:
+            tuple: ``(coords, feats, labels)`` with ``coords`` possibly
+            modified in-place.
+        """
         if random.random() < 0.95:
             for curr_ax in self.horz_axes:
                 if random.random() < 0.5:
@@ -157,8 +374,29 @@ class RandomHorizontalFlip(object):
 
 
 class ElasticDistortion:
+    """Apply elastic distortion to 3D point cloud coordinates.
+
+    Creates smooth, spatially-varying random displacements by generating
+    coarse-grained Gaussian noise, smoothing it with repeated box-filter
+    convolutions, and interpolating the result back to the original point
+    positions. This coordinate-space augmentation simulates non-rigid
+    deformations and is applied with 95 % probability.
+    """
 
     def __init__(self, distortion_params):
+        """Initialise ElasticDistortion with granularity/magnitude pairs.
+
+        Each pair defines one pass of elastic distortion with a
+        particular noise grid resolution and displacement scale.
+        Multiple pairs are applied sequentially.
+
+        Args:
+            distortion_params (list[tuple[float, float]] | None): List of
+                ``(granularity, magnitude)`` pairs. ``granularity``
+                controls the spatial frequency of the noise (in the same
+                units as the coordinates), and ``magnitude`` scales the
+                displacement. If ``None``, the transform is a no-op.
+        """
         self.distortion_params = distortion_params
 
     def elastic_distortion(self, coords, granularity, magnitude):

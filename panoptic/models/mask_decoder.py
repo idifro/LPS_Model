@@ -13,6 +13,36 @@ from panoptic.models.clip_token_head import CLIPTokenHead
 
 
 class PanopticDecoder(nn.Module):
+    """Mask2Former-style transformer decoder for panoptic segmentation of 3D point clouds.
+
+    Processes frozen backbone features (e.g., DisNet 768-d) through a stack of
+    masked cross-attention, self-attention, and FFN layers to produce per-query
+    class logits and binary mask predictions. Designed for single-level features
+    with virtual multi-level cycling (num_levels repeats of the same source).
+
+    Pipeline:
+        1. Project backbone features to hidden_dim via linear + LayerNorm.
+        2. Generate sinusoidal positional encodings from xyz coordinates.
+        3. Concatenate learnable thing queries and fixed stuff queries.
+        4. Run num_blocks * num_levels decoder layers (cross-attn -> self-attn -> FFN).
+        5. At each layer produce intermediate class/mask predictions (deep supervision).
+        6. Optionally project queries to CLIP space via CLIPTokenHead.
+
+    Args:
+        backbone_dim (int): Dimension of frozen backbone features (default 768).
+        hidden_dim (int): Internal transformer hidden dimension (default 256).
+        num_classes (int): Number of semantic classes (default 16).
+        num_thing_queries (int): Number of learnable instance queries (default 100).
+        num_stuff_classes (int): Number of stuff classes with fixed queries (default 6).
+        nheads (int): Number of attention heads (default 8).
+        dim_feedforward (int): FFN intermediate dimension (default 1024).
+        num_blocks (int): Number of repeated decoder blocks (default 3).
+        num_levels (int): Virtual feature levels cycled per block (default 3).
+        dropout (float): Dropout rate (default 0.0).
+        use_token_head (bool): Whether to attach a CLIP token projection head.
+        token_dim (int): CLIP embedding dimension (default 768).
+    """
+
     def __init__(
         self,
         backbone_dim=768,
@@ -28,6 +58,28 @@ class PanopticDecoder(nn.Module):
         use_token_head=False,
         token_dim=768,
     ):
+        """Initialize the panoptic decoder with projections, queries, and layer stacks.
+
+        Builds backbone and mask-feature projection heads, the sinusoidal positional
+        encoder, learnable thing/stuff query embeddings, level embeddings for virtual
+        multi-scale cycling, and the full stack of cross-attention, self-attention,
+        and FFN layers. Also constructs the classification and mask prediction heads,
+        plus an optional CLIP token head.
+
+        Args:
+            backbone_dim (int): Width of input backbone features.
+            hidden_dim (int): Decoder hidden dimension all components share.
+            num_classes (int): Semantic class count (output logits have +1 for no-object).
+            num_thing_queries (int): Learnable instance query count.
+            num_stuff_classes (int): Stuff query count (one per stuff class).
+            nheads (int): Multi-head attention head count.
+            dim_feedforward (int): FFN expansion dimension.
+            num_blocks (int): Number of decoder blocks.
+            num_levels (int): Virtual levels per block (total layers = blocks * levels).
+            dropout (float): Dropout probability.
+            use_token_head (bool): If True, attach CLIPTokenHead for open-vocab.
+            token_dim (int): CLIP embedding dimension for token head output.
+        """
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_classes = num_classes

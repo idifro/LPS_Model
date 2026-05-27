@@ -10,6 +10,21 @@ CKPT_PATH = "models/nuscenes_openseg.pth.tar"
 
 
 def main():
+    """Inspect the pretrained OpenScene checkpoint to understand its structure and compatibility.
+
+    Used as a Phase 0.2 diagnostic step before integrating the backbone into the
+    panoptic pipeline, ensuring the checkpoint can be loaded into DisNet correctly.
+
+    Steps:
+        1. Loads the checkpoint from CKPT_PATH and identifies the state dict root key.
+        2. Strips any 'module.' prefix from parameter names (DDP artifact).
+        3. Prints all layer names and shapes for manual inspection.
+        4. Identifies projection/head/output layers to detect the output embedding dimension.
+        5. Reports total parameter count and DisNet loading compatibility (prefix convention).
+
+    Returns:
+        None: All output is printed to stdout for interactive inspection.
+    """
     print(f"Loading checkpoint: {CKPT_PATH}")
     ckpt = torch.load(CKPT_PATH, map_location="cpu")
 

@@ -13,6 +13,38 @@ from panoptic.losses.matcher import HungarianMatcher
 
 
 class PanopticLoss(nn.Module):
+    """Combined panoptic segmentation loss with Hungarian matching.
+
+    Aggregates three loss terms for each decoder layer output:
+        1. Cross-entropy classification loss (with eos_coef down-weighting
+           the no-object class to handle query surplus).
+        2. Sigmoid binary cross-entropy mask loss on matched masks.
+        3. Dice mask loss on matched masks.
+
+    The module first runs Hungarian matching to pair predicted queries with
+    ground-truth instances, then computes losses only on matched pairs.
+    Auxiliary losses from intermediate decoder layers are included with the
+    same weights (prefixed by layer index).
+
+    Args:
+        num_classes (int): Number of foreground semantic classes.
+        eos_coef (float): Weight for the no-object (background) class in CE loss.
+        cost_class (float): Classification cost weight for matcher.
+        cost_mask (float): Mask BCE cost weight for matcher.
+        cost_dice (float): Dice cost weight for matcher.
+        weight_ce (float): Final multiplier for classification loss.
+        weight_mask (float): Final multiplier for mask BCE loss.
+        weight_dice (float): Final multiplier for Dice loss.
+        focal_gamma (float): Focal loss gamma (unused in current CE variant).
+        focal_alpha (float): Focal loss alpha (unused in current CE variant).
+        num_points (int): Max points sampled for mask loss computation.
+        num_mask_pts (int): Additional mask point budget (reserved).
+        p_ratio (float): Point sampling ratio passed to matcher.
+
+    Returns (in forward):
+        tuple[dict[str, Tensor], list]: Weighted loss dict and match indices.
+    """
+
     def __init__(
         self,
         num_classes=16,
@@ -29,6 +61,28 @@ class PanopticLoss(nn.Module):
         num_mask_pts=500,
         p_ratio=0.4,
     ):
+        """Initialize PanopticLoss with matcher, weight dictionary, and hyperparams.
+
+        Creates the HungarianMatcher instance, stores per-loss weights in a
+        dictionary used to scale raw losses before back-propagation, and
+        records hyperparameters controlling focal loss and point sampling.
+
+        Args:
+            num_classes (int): Foreground class count; no-object is class index
+                num_classes. Default: 16.
+            eos_coef (float): CE weight for the no-object class. Default: 0.1.
+            cost_class (float): Matcher classification cost weight. Default: 2.0.
+            cost_mask (float): Matcher mask BCE cost weight. Default: 5.0.
+            cost_dice (float): Matcher Dice cost weight. Default: 5.0.
+            weight_ce (float): Loss multiplier for cross-entropy. Default: 2.0.
+            weight_mask (float): Loss multiplier for mask BCE. Default: 5.0.
+            weight_dice (float): Loss multiplier for Dice. Default: 5.0.
+            focal_gamma (float): Focal loss focusing parameter. Default: 4.0.
+            focal_alpha (float): Focal loss balancing factor. Default: 0.25.
+            num_points (int): Max voxel points for mask loss sampling. Default: 50000.
+            num_mask_pts (int): Reserved mask point budget. Default: 500.
+            p_ratio (float): Point ratio for matcher mask costs. Default: 0.4.
+        """
         super().__init__()
         self.num_classes = num_classes
         self.eos_coef = eos_coef
@@ -81,6 +135,26 @@ class PanopticLoss(nn.Module):
         return weighted, indices
 
     def _get_losses(self, outputs, targets, indices, num_masks):
+        """Aggregate classification and mask losses for one set of matched pairs.
+
+        Called once for the final decoder output and once per auxiliary layer.
+        Combines the cross-entropy classification loss and the mask losses
+        (sigmoid BCE + Dice) into a single dictionary.
+
+        Args:
+            outputs (dict): Model predictions with keys 'pred_logits' (B, Q, C+1)
+                and 'pred_masks' (B, V, Q).
+            targets (dict): Ground-truth with 'classes' list[Tensor(M,)] and
+                'masks' list[Tensor(M, V)].
+            indices (list[tuple[Tensor, Tensor]]): Hungarian matching result,
+                one (pred_idx, tgt_idx) pair per batch element.
+            num_masks (float): Total number of GT masks across the batch,
+                used to normalize mask losses.
+
+        Returns:
+            dict[str, Tensor]: Dictionary with keys 'loss_ce', 'loss_mask',
+                'loss_dice' containing scalar loss tensors.
+        """
         losses = {}
         losses.update(self._loss_class(outputs, targets, indices))
         losses.update(self._loss_masks(outputs, targets, indices, num_masks))
@@ -161,6 +235,21 @@ class PanopticLoss(nn.Module):
         return {"loss_mask": loss_mask, "loss_dice": loss_dice}
 
     def _get_pred_idx(self, indices):
+        """Convert list of per-sample index tuples to batch and source index tensors.
+
+        Flattens the Hungarian matching output into two 1-D tensors that can
+        be used for advanced indexing into (B, Q, ...) prediction tensors.
+        The batch_idx tensor holds the sample index for each matched query,
+        and src_idx holds the query index within that sample.
+
+        Args:
+            indices (list[tuple[Tensor, Tensor]]): Per-batch matched pairs
+                where each tuple contains (predicted_indices, target_indices).
+
+        Returns:
+            tuple[Tensor, Tensor]: (batch_idx, src_idx) both of shape
+                (N_total_matched,) suitable for indexing pred_logits or pred_masks.
+        """
         batch_idx = torch.cat(
             [torch.full_like(src, i) for i, (src, _) in enumerate(indices)]
         )

@@ -73,6 +73,21 @@ except ImportError:
 
 
 def parse_args():
+    """Parse command-line arguments for Phase 3.3 semantic proxy verification.
+
+    Configures the data paths, CLIP model variant, label mode (16 coarse vs 43 detailed),
+    number of evaluation samples, and output directory for visualization artifacts.
+
+    Steps:
+        1. Creates an ArgumentParser with defaults for nuscenes_mini and ViT-L/14@336px.
+        2. Adds arguments for dataroot, version, ckpt, num_samples, split, save_dir,
+           clip_model, mode, and prompt_eng flag.
+        3. Parses and returns the namespace object.
+
+    Returns:
+        argparse.Namespace: Parsed arguments including mode ('16' or 'details'),
+            clip_model (str), and prompt_eng (bool).
+    """
     p = argparse.ArgumentParser()
     p.add_argument("--dataroot", default="/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini")
     p.add_argument("--version", default="v1.0-mini")
@@ -120,6 +135,23 @@ def encode_text_prototypes(class_names, clip_model_name, device, prompt_eng=True
 
 
 def load_backbone(ckpt_path, device):
+    """Load the pretrained DisNet backbone with all parameters frozen for inference.
+
+    Instantiates and configures a DisNet (MinkUNet18A + openseg) model, loads
+    pretrained weights, and disables all gradient computation for downstream use.
+
+    Steps:
+        1. Constructs DisNet with openseg/MinkUNet18A config and moves to device.
+        2. Loads checkpoint, strips 'module.' prefix, and applies strict state dict loading.
+        3. Sets model to eval mode and freezes all parameters.
+
+    Args:
+        ckpt_path (str): Path to the pretrained OpenScene checkpoint file.
+        device (torch.device): Target device (cuda or cpu).
+
+    Returns:
+        DisNet: Frozen backbone model ready for feature extraction.
+    """
     class Cfg:
         feature_2d_extractor = "openseg"
         arch_3d = "MinkUNet18A"
@@ -134,6 +166,25 @@ def load_backbone(ckpt_path, device):
 
 
 def extract_features(model, batch, device):
+    """Extract 768-d backbone features from a single dataset sample.
+
+    Converts the batch dictionary's voxel coordinates and features into a
+    MinkowskiEngine SparseTensor and runs the frozen backbone forward pass.
+
+    Steps:
+        1. Reads vox_coords (V, 3) and vox_feats (V, 3) from the batch dict.
+        2. Prepends a zero batch-index column to form ME-compatible coordinates.
+        3. Constructs a SparseTensor on the target device and runs forward pass.
+        4. Extracts dense feature tensor from the sparse output.
+
+    Args:
+        model (DisNet): Frozen backbone model.
+        batch (dict): Single sample dict with 'vox_coords' and 'vox_feats' tensors.
+        device (torch.device): Target device for computation.
+
+    Returns:
+        torch.Tensor: Voxel features of shape (V, 768).
+    """
     vox_coords = batch["vox_coords"]
     vox_feats = batch["vox_feats"]
     V = vox_coords.shape[0]
@@ -150,6 +201,24 @@ def extract_features(model, batch, device):
 
 
 def main():
+    """Run the Phase 3.3 semantic proxy check: zero-shot classification via CLIP text alignment.
+
+    Validates that the frozen DisNet backbone produces features with meaningful semantic
+    structure by computing dot-product similarity against CLIP text prototypes and
+    measuring per-class accuracy and mIoU without any learned decoder.
+
+    Steps:
+        1. Parses args, loads dataset and frozen backbone, encodes CLIP text prototypes.
+        2. For each sample, extracts backbone features and computes semi-cosine similarity
+           against text prototypes (L2-normalized text, raw point features).
+        3. In 'details' mode, argmaxes over 43 fine-grained labels then maps to 16 classes.
+        4. Accumulates per-class accuracy, confusion matrix, and mIoU across samples.
+        5. Saves per-sample visualization arrays (coords, predictions, similarity, confusion)
+           and a global results JSON to save_dir.
+
+    Returns:
+        None: Prints metrics to stdout and saves artifacts to disk.
+    """
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")

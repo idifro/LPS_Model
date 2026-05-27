@@ -31,6 +31,21 @@ from panoptic.train.train_panoptic import (
 
 
 def parse_args():
+    """Parse command-line arguments for the full panoptic evaluation script.
+
+    Called at the entry point of the evaluation pipeline to configure
+    dataset paths, checkpoint locations, and output directories.
+
+    Steps:
+        1. Creates an ArgumentParser with description.
+        2. Adds arguments for config, checkpoint, dataroot, version, split, save_dir.
+        3. Parses and returns the namespace.
+
+    Returns:
+        argparse.Namespace: Parsed arguments with fields config (str),
+            checkpoint (str), dataroot (str or None), version (str),
+            split (str), and save_dir (str).
+    """
     p = argparse.ArgumentParser(description="Full panoptic evaluation")
     p.add_argument("--config", default="panoptic/configs/full_nuscenes.yaml")
     p.add_argument("--checkpoint", default="panoptic/checkpoints_full/best.pth")
@@ -98,6 +113,25 @@ def format_table(pq_all, sq_all, rq_all, iou_all):
 
 
 def main():
+    """Run end-to-end panoptic evaluation on the nuScenes validation set.
+
+    This is the top-level entry point invoked from the command line. It
+    orchestrates the full evaluation pipeline: loading models, running
+    inference on every sample, computing PQ/SQ/RQ/mIoU metrics, and
+    saving results to disk.
+
+    Steps:
+        1. Parses CLI args and loads YAML config with optional overrides.
+        2. Loads the pre-trained backbone and panoptic decoder from checkpoint.
+        3. Iterates over the validation DataLoader, extracting backbone features
+           and running mask-based panoptic inference per sample.
+        4. Accumulates predictions in a PanopticEval evaluator.
+        5. Computes and prints a per-class results table.
+        6. Saves evaluation results as .txt, .json, and confusion matrix .npy.
+
+    Returns:
+        None
+    """
     args = parse_args()
     cfg = load_config(args.config)
 

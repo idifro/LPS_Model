@@ -14,6 +14,18 @@ class CLIPTokenHead(nn.Module):
     """Predicts L2-normalized CLIP-space token embeddings per query."""
 
     def __init__(self, hidden_dim=256, token_dim=768, num_layers=3):
+        """Initialize the CLIP token projection head.
+
+        Builds a multi-layer perceptron that maps decoder query embeddings
+        (hidden_dim) to the CLIP text embedding space (token_dim). The MLP
+        uses an intermediate width of hidden_dim*2. The forward pass applies
+        L2 normalization after the MLP so outputs lie on the unit hypersphere.
+
+        Args:
+            hidden_dim (int): Input dimension matching decoder hidden size.
+            token_dim (int): Output dimension matching CLIP text embedding size.
+            num_layers (int): Number of linear layers in the projection MLP.
+        """
         super().__init__()
         self.mlp = MLP(hidden_dim, hidden_dim * 2, token_dim, num_layers)
 

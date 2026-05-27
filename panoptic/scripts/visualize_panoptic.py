@@ -51,6 +51,21 @@ from panoptic.scripts.visualize_lidar_camera_overlay import (
 # ══════════════════════════════════════════════════════════════════════════════
 
 def parse_args():
+    """Parse command-line arguments for the panoptic visualization script.
+
+    Called at startup to configure visualization parameters such as
+    checkpoint path, dataset version, number of samples, and rendering
+    options (point size, alpha blending, max projection depth).
+
+    Steps:
+        1. Creates an ArgumentParser with relevant options.
+        2. Adds args for config, checkpoint, dataroot, version, split,
+           num_samples, save_dir, max_depth, point_size, and alpha.
+        3. Parses sys.argv and returns the namespace.
+
+    Returns:
+        argparse.Namespace: Parsed arguments controlling the visualization run.
+    """
     p = argparse.ArgumentParser(description="Panoptic visualization")
     p.add_argument("--config", default="panoptic/configs/full_nuscenes.yaml")
     p.add_argument("--checkpoint", default="panoptic/checkpoints_full/best.pth")
@@ -230,6 +245,27 @@ def save_overlay_with_legend(overlay_img, legend_img, path):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def load_decoder(cfg, checkpoint_path, device):
+    """Load the PanopticDecoder from a saved checkpoint file.
+
+    Used during visualization to reconstruct the trained decoder model
+    so that panoptic inference can be run on selected samples.
+
+    Steps:
+        1. Reads model hyperparameters from the config dict.
+        2. Instantiates a PanopticDecoder with those hyperparameters.
+        3. Loads the 'decoder' state dict from the checkpoint file.
+        4. Sets the model to eval mode and prints load confirmation.
+
+    Args:
+        cfg (dict): Full YAML config dictionary containing a 'model' key
+            with decoder architecture hyperparameters.
+        checkpoint_path (str): Path to the .pth checkpoint file containing
+            a 'decoder' state dict entry.
+        device (torch.device): Device to place the model on (cpu or cuda).
+
+    Returns:
+        PanopticDecoder: The loaded decoder model in eval mode.
+    """
     mcfg = cfg["model"]
     decoder = PanopticDecoder(
         backbone_dim=mcfg["backbone_dim"],
@@ -261,6 +297,25 @@ CAMERA_GRID_ORDER = [
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    """Generate panoptic visualization outputs for selected nuScenes samples.
+
+    This is the top-level entry point for the visualization pipeline. It
+    produces per-camera overlay images, PLY point clouds, and BEV comparison
+    plots for both predictions and ground truth.
+
+    Steps:
+        1. Parses arguments and loads config, backbone, and decoder.
+        2. Randomly selects samples across different scenes.
+        3. For each sample, runs panoptic inference and generates colors.
+        4. Saves PLY files (semantic, panoptic, GT, instance).
+        5. Renders BEV comparison plot (predicted vs GT).
+        6. Projects 3D points to each camera and saves overlay images
+           with per-instance panoptic legends.
+        7. Writes a summary text file listing all visualized samples.
+
+    Returns:
+        None
+    """
     args = parse_args()
     cfg = load_config(args.config)
 

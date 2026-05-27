@@ -30,11 +30,44 @@ from panoptic.dataset.nuscenes_panoptic import (
 
 
 def load_config(config_path):
+    """Load a YAML configuration file and return it as a dictionary.
+
+    Used at the start of evaluation to read model, data, and inference
+    hyperparameters from disk.
+
+    Steps:
+        1. Opens the file at config_path in read mode.
+        2. Parses the YAML content using yaml.safe_load.
+        3. Returns the resulting dictionary.
+
+    Args:
+        config_path (str): Absolute or relative path to the YAML config file.
+
+    Returns:
+        dict: Parsed configuration dictionary.
+    """
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
 
 def load_backbone(ckpt_path, device):
+    """Load the DisNet 3D backbone from a checkpoint and freeze all parameters.
+
+    Used in the evaluation pipeline to provide per-voxel features that feed
+    into the panoptic decoder.
+
+    Steps:
+        1. Instantiates a DisNet model with openseg/MinkUNet18A config.
+        2. Loads and cleans the state dict from the checkpoint.
+        3. Sets the model to eval mode and disables gradients.
+
+    Args:
+        ckpt_path (str): Path to the backbone .pth.tar checkpoint.
+        device (torch.device): Target device (cpu or cuda).
+
+    Returns:
+        DisNet: The loaded and frozen backbone model in eval mode.
+    """
     class Cfg:
         feature_2d_extractor = "openseg"
         arch_3d = "MinkUNet18A"
@@ -49,6 +82,26 @@ def load_backbone(ckpt_path, device):
 
 
 def extract_backbone_features(backbone, batch, device):
+    """Extract per-voxel features from the 3D backbone for a single sample.
+
+    Called per-batch during evaluation to convert raw voxel coordinates and
+    features into the dense feature representation consumed by the decoder.
+
+    Steps:
+        1. Prepends a batch-index column of zeros to voxel coordinates.
+        2. Constructs a MinkowskiEngine SparseTensor on the target device.
+        3. Runs the backbone forward pass (no grad).
+        4. Returns features and coordinates each with a batch dimension.
+
+    Args:
+        backbone (DisNet): The frozen 3D backbone model.
+        batch (dict): Dataset sample dict containing 'vox_coords' and 'vox_feats'.
+        device (torch.device): Target device for computation.
+
+    Returns:
+        tuple: (feats, coords_xyz) where feats is (1, V, D) backbone output
+            and coords_xyz is (1, V, 3) spatial coordinates.
+    """
     vox_coords = batch["vox_coords"]
     vox_feats = batch["vox_feats"]
     V = vox_coords.shape[0]
@@ -66,6 +119,28 @@ def extract_backbone_features(backbone, batch, device):
 
 
 def panoptic_inference_linear(pred_logits, pred_masks, num_classes=16, overlap_thr=0.8):
+    """Perform panoptic inference using the linear classification head.
+
+    Uses softmax over the predicted logits to determine query class scores,
+    then applies greedy mask assignment to produce per-voxel semantic and
+    instance labels.
+
+    Steps:
+        1. Applies softmax to pred_logits and takes argmax for class labels.
+        2. Sigmoids the predicted masks to get per-voxel probabilities.
+        3. Filters out queries assigned to the no-object class.
+        4. Delegates to _greedy_assign for panoptic label assignment.
+
+    Args:
+        pred_logits (Tensor): Query classification logits of shape (Q, C+1).
+        pred_masks (Tensor): Per-voxel mask logits of shape (V, Q).
+        num_classes (int): Number of valid semantic classes (default 16).
+        overlap_thr (float): Minimum overlap ratio to accept a mask.
+
+    Returns:
+        tuple: (sem_pred, inst_pred) numpy arrays of shape (V,) with
+            semantic class IDs and instance IDs respectively.
+    """
     scores, labels = pred_logits.softmax(-1).max(-1)
     masks = pred_masks.sigmoid()
     V = masks.shape[0]
@@ -76,6 +151,27 @@ def panoptic_inference_linear(pred_logits, pred_masks, num_classes=16, overlap_t
 
 
 def panoptic_inference_token(pred_tokens, pred_masks, text_prototypes, num_classes=16, overlap_thr=0.8):
+    """Perform panoptic inference using token cosine similarity to text prototypes.
+
+    Classifies each query by computing cosine similarity between its predicted
+    token embedding and the CLIP text prototypes, then applies greedy assignment.
+
+    Steps:
+        1. Computes cosine similarity matrix between tokens and prototypes.
+        2. Takes max similarity as score and argmax as class label per query.
+        3. Filters queries with score below 0.1 threshold.
+        4. Delegates to _greedy_assign for panoptic label assignment.
+
+    Args:
+        pred_tokens (Tensor): Query token embeddings of shape (Q, D).
+        pred_masks (Tensor): Per-voxel mask logits of shape (V, Q).
+        text_prototypes (Tensor): CLIP text prototype embeddings of shape (C, D).
+        num_classes (int): Number of semantic classes (default 16).
+        overlap_thr (float): Minimum overlap ratio to accept a mask.
+
+    Returns:
+        tuple: (sem_pred, inst_pred) numpy arrays of shape (V,).
+    """
     cos_sim = torch.mm(pred_tokens, text_prototypes.t())  # (Q, C)
     scores, labels = cos_sim.max(-1)
     masks = pred_masks.sigmoid()
@@ -104,6 +200,30 @@ def panoptic_inference_ensemble(pred_logits, pred_tokens, pred_masks, text_proto
 
 
 def _greedy_assign(scores, labels, masks, V, overlap_thr):
+    """Greedily assign panoptic labels to voxels using sorted mask confidence.
+
+    Processes queries in descending score order, assigning each mask's voxels
+    to the corresponding semantic/instance label only if sufficient unoccupied
+    overlap remains. Thing classes get unique instance IDs; stuff classes share
+    a single instance ID per class.
+
+    Steps:
+        1. Sorts queries by score in descending order.
+        2. For each query, binarizes the mask at 0.5 threshold.
+        3. Removes already-assigned voxels and checks overlap ratio.
+        4. Assigns semantic and instance labels based on thing/stuff distinction.
+
+    Args:
+        scores (Tensor): Confidence scores of shape (K,) for kept queries.
+        labels (Tensor): Class labels of shape (K,) for kept queries.
+        masks (Tensor): Sigmoid mask probabilities of shape (V, K).
+        V (int): Total number of voxels.
+        overlap_thr (float): Minimum fraction of original mask area that
+            must remain unoccupied for the query to be accepted.
+
+    Returns:
+        tuple: (sem_pred, inst_pred) numpy arrays of shape (V,) with int64 dtype.
+    """
     sorted_idx = scores.argsort(descending=True)
     sem_pred = np.full(V, 0, dtype=np.int64)
     inst_pred = np.zeros(V, dtype=np.int64)
@@ -140,6 +260,22 @@ def _greedy_assign(scores, labels, masks, V, overlap_thr):
 
 
 def main():
+    """Run panoptic evaluation across linear, token, and ensemble modes.
+
+    This is the top-level entry point for the Phase 5 token head evaluation.
+    It loads the model with token head support, runs inference on the val set,
+    and reports PQ/SQ/RQ/mIoU for each classification mode.
+
+    Steps:
+        1. Parses CLI arguments and loads config/checkpoint.
+        2. Initializes the dataset, backbone, decoder, and text prototypes.
+        3. Creates separate PanopticEval evaluators for each mode.
+        4. Iterates over validation samples, running all three inference paths.
+        5. Prints per-class results tables and optionally saves to JSON.
+
+    Returns:
+        None
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     parser.add_argument("--checkpoint", default=None, help="Override checkpoint path")

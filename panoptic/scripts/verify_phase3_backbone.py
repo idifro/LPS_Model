@@ -25,6 +25,20 @@ from panoptic.dataset.nuscenes_panoptic import NuScenesPanoptic
 
 
 def parse_args():
+    """Parse command-line arguments for Phase 3 backbone verification.
+
+    Provides configuration for dataroot, nuScenes version, checkpoint path,
+    number of samples, and dataset split used in all Phase 3 sub-tests.
+
+    Steps:
+        1. Creates an ArgumentParser with defaults for nuscenes_mini paths.
+        2. Adds arguments for dataroot, version, ckpt, num_samples, and split.
+        3. Parses and returns the namespace object.
+
+    Returns:
+        argparse.Namespace: Parsed arguments with fields dataroot, version, ckpt,
+            num_samples (int), and split (str).
+    """
     p = argparse.ArgumentParser()
     p.add_argument("--dataroot", default="/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini")
     p.add_argument("--version", default="v1.0-mini")
@@ -289,6 +303,22 @@ def test_3_4_memory_behavior(model, dataset, device, num_samples=10):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    """Orchestrate all Phase 3 backbone verification tests and print a final summary.
+
+    Entry point for the Phase 3 verification script, running tests 3.1 (frozen loading),
+    3.2 (feature sanity), and 3.4 (memory behavior) sequentially on the val split.
+
+    Steps:
+        1. Parses CLI args and selects the compute device (CUDA preferred).
+        2. Instantiates the NuScenesPanoptic dataset for the specified split.
+        3. Runs test_3_1 to load and freeze the backbone, returning the model.
+        4. Runs test_3_2 for feature shape/norm/NaN checks across num_samples.
+        5. Runs test_3_4 for GPU memory and latency profiling.
+        6. Prints a consolidated pass/fail summary for all sub-tests.
+
+    Returns:
+        None: Prints results to stdout; raises AssertionError on test failure.
+    """
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")

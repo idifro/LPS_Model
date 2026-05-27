@@ -29,6 +29,22 @@ PROMPT_TEMPLATE = "a {} in a scene"
 
 
 def main():
+    """Generate and save L2-normalized CLIP text prototypes for nuScenes 16-class panoptic segmentation.
+
+    Produces a reusable prototype file that maps each semantic class to a 768-d CLIP text
+    embedding, used downstream for open-vocabulary classification and loss computation.
+
+    Steps:
+        1. Parses CLI arguments for output path, device, and CLIP model variant.
+        2. Loads the specified CLIP model (default ViT-L/14@336px) in eval mode.
+        3. Formats each of the 16 class names with the prompt template "a {label} in a scene".
+        4. Tokenizes prompts, encodes with CLIP text encoder, and L2-normalizes embeddings.
+        5. Saves a dictionary with embeddings (16, 768), class_names, prompt_template,
+           and model_name to the output .pt file.
+
+    Returns:
+        None: Saves the prototype file to disk and prints confirmation.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default="panoptic/clip_prototypes/text_prototypes_vitl14_336.pt")
     parser.add_argument("--device", default="cuda")

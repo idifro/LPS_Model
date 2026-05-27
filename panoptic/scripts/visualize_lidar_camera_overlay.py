@@ -92,6 +92,21 @@ IGNORE_COLOR = np.array([40, 40, 40], dtype=np.uint8)  # dark gray for ignore
 
 
 def parse_args():
+    """Parse command-line arguments for the LiDAR-to-camera overlay visualization.
+
+    Called at startup to configure the data source, backbone checkpoint,
+    CLIP model, rendering parameters, and output location. Supports both
+    GPU-based inference and CPU-only visualization from pre-saved numpy files.
+
+    Steps:
+        1. Creates an ArgumentParser with all relevant options.
+        2. Adds arguments for dataroot, version, ckpt, num_samples, split,
+           save_dir, max_depth, point_size, alpha, from_saved, and clip_model.
+        3. Parses sys.argv and returns the resulting namespace.
+
+    Returns:
+        argparse.Namespace: Parsed arguments with all visualization settings.
+    """
     p = argparse.ArgumentParser()
     p.add_argument("--dataroot", default="/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini")
     p.add_argument("--version", default="v1.0-mini")
@@ -296,6 +311,25 @@ def draw_bev(coords_xyz, labels, save_path, title="BEV"):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    """Run the full LiDAR-to-camera overlay visualization pipeline.
+
+    This is the top-level entry point that orchestrates either a GPU-based
+    pipeline (backbone + CLIP inference + projection) or a CPU-only path
+    using pre-saved numpy arrays. Produces per-camera overlay images, BEV
+    plots, and a summary file.
+
+    Steps:
+        1. Parses arguments and initializes the NuScenes database.
+        2. If --from_saved is specified, delegates to _visualize_from_saved.
+        3. Otherwise loads backbone and CLIP, generates text prototypes.
+        4. For each sample: extracts features, computes CLIP predictions,
+           projects points to all 6 cameras, and saves overlay images.
+        5. Generates BEV scatter plots and per-sample numpy data dumps.
+        6. Writes a summary.txt with per-sample accuracy statistics.
+
+    Returns:
+        None
+    """
     args = parse_args()
 
     if not HAS_PIL:
