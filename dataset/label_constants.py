@@ -51,6 +51,31 @@ MATTERPORT_LABELS_160 = ('wall', 'door', 'ceiling', 'floor', 'picture', 'window'
 NUSCENES_LABELS_16 = ('barrier', 'bicycle', 'bus', 'car', 'construction vehicle', 'motorcycle', 'person', 'traffic cone',
                       'trailer', 'truck', 'drivable surface', 'other flat', 'sidewalk', 'terrain', 'manmade', 'vegetation')
 
+# ─────────────────────────────────────────────────────────────────────────────
+# B12/N4 Open-Vocabulary Split (Xiao et al., arXiv:2401.02402, Table 1)
+# 12 base (seen) classes used at TRAIN time.
+# 4 novel (unseen) classes evaluated only at TEST time via CLIP similarity.
+# Novel things : bicycle(1), bus(2), motorcycle(5)   → 0-indexed within 16-class list
+# Novel stuff  : vegetation(15)
+# ─────────────────────────────────────────────────────────────────────────────
+NUSCENES_B12N4_NOVEL_IDX = [1, 2, 5, 15]          # 0-indexed in NUSCENES_LABELS_16
+NUSCENES_B12N4_BASE_IDX  = [0, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # 12 base
+NUSCENES_B12N4_NOVEL_THINGS_IDX = [1, 2, 5]        # bicycle, bus, motorcycle
+NUSCENES_B12N4_NOVEL_STUFF_IDX  = [15]             # vegetation
+
+# Readable names for each split element (used in eval reporting)
+NUSCENES_B12N4_BASE_NAMES  = [NUSCENES_LABELS_16[i] for i in NUSCENES_B12N4_BASE_IDX]
+NUSCENES_B12N4_NOVEL_NAMES = [NUSCENES_LABELS_16[i] for i in NUSCENES_B12N4_NOVEL_IDX]
+
+# Alternative splits from the paper (for ablation, Section 2.5 of plan)
+# B11/N5: novel = bicycle(1), car(3), construction vehicle(4), terrain(13), manmade(14)
+NUSCENES_B11N5_NOVEL_IDX = [1, 3, 4, 13, 14]
+NUSCENES_B11N5_BASE_IDX  = [i for i in range(16) if i not in NUSCENES_B11N5_NOVEL_IDX]
+
+# B12/N4 variant 2: novel = construction vehicle(4), traffic cone(7), other flat(11), manmade(14)
+NUSCENES_B12N4_V2_NOVEL_IDX = [4, 7, 11, 14]
+NUSCENES_B12N4_V2_BASE_IDX  = [i for i in range(16) if i not in NUSCENES_B12N4_V2_NOVEL_IDX]
+
 
 NUSCENES_LABELS_DETAILS = ('barrier', 'barricade', 'bicycle', 'bus', 'car', 'bulldozer', 'excavator', 'concrete mixer', 'crane', 'dump truck',
                            'motorcycle', 'person', 'pedestrian','traffic cone', 'trailer', 'semi trailer', 'cargo container', 'shipping container', 'freight container',

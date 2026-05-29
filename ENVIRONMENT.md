@@ -13,8 +13,8 @@
 module load conda
 
 # 2. Create environment
-conda create -n openscene python=3.8 -y
-conda activate openscene
+conda create -n opensc_env python=3.8 -y
+conda activate opensc_env
 
 # 3. Install PyTorch 1.7.1 with CUDA 11.0
 pip install torch==1.7.1+cu110 torchvision==0.8.2+cu110 torchaudio==0.7.2 \
@@ -51,12 +51,12 @@ export OMP_NUM_THREADS=16
 
 ```bash
 module load conda
-conda activate openscene
+conda activate opensc_env
 module load cuda/11.0.2
 module load cudnn/11.0_v8.0
-export PYTHONPATH=/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene
+export PYTHONPATH=/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/vandana_experiments/LPS_Model
 export OMP_NUM_THREADS=16
-cd /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene
+cd /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/vandana_experiments/LPS_Model
 ```
 
 ## GPU Job Submission (A100)

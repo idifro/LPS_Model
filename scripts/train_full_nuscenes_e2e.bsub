@@ -1,25 +1,33 @@
 #!/bin/bash
-#BSUB -J openscene_e2e_full
-#BSUB -o exp/nusc_full_e2e/train_%J.stdout
-#BSUB -e exp/nusc_full_e2e/train_%J.stderr
+#BSUB -J e2e_encoder_panoptic
+#BSUB -o panoptic/logs/e2e_encoder_%J.stdout
+#BSUB -e panoptic/logs/e2e_encoder_%J.stderr
 #BSUB -q batch_a100
 #BSUB -W 72:00
-#BSUB -n 16
+#BSUB -n 8
 #BSUB -M 8192
 #BSUB -R "span[hosts=1]"
-#BSUB -gpu "num=4:mode=exclusive_process:mps=no"
+#BSUB -gpu "num=1:mode=exclusive_process:mps=no"
+
+# ─── E2E Encoder Unfreezing — Panoptic Segmentation ─────────────────────────
+# Unfreezes DisNet backbone (decoder stages) during panoptic training.
+# Differential LR: backbone=1e-5, decoder=1e-4.
+#
+# USAGE:
+#   For mini validation:  change --config to panoptic/configs/mini_e2e_encoder.yaml
+#   For full training:    keep panoptic/configs/full_nuscenes_e2e.yaml (default below)
 
 module load conda
-conda activate openscene
+conda activate opensc_env
 module load cuda/11.0.2
 module load cudnn/11.0_v8.0
 
 export PYTHONPATH=/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/vandana_experiments/LPS_Model
+export OMP_NUM_THREADS=4
 cd /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/vandana_experiments/LPS_Model
 
-export OMP_NUM_THREADS=4
+mkdir -p panoptic/logs
+mkdir -p panoptic/checkpoints_e2e_full
 
-mkdir -p exp/nusc_full_e2e
-
-python run/distill.py \
-    --config config/nuscenes/ours_openseg_full_e2e.yaml
+python -u panoptic/train/train_panoptic_e2e.py \
+    --config panoptic/configs/full_nuscenes_e2e.yaml

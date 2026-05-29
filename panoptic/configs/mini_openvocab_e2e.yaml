@@ -1,0 +1,265 @@
+# ─── Open-Vocabulary E2E Training — nuScenes Mini ────────────────────────────
+# B12/N4 split (Xiao et al. arXiv:2401.02402):
+#   Train on 12 base classes. Novel: bicycle, bus, motorcycle (things), vegetation (stuff).
+#   Loss: L_cls (base only) + L_mask + L_O (object distill) + L_V (voxel distill)
+#   Architecture: MinkUNet + SceneContextEncoder at bottleneck for contextual features
+#   E2E: backbone decoder + context encoder trainable; backbone encoder frozen
+
+# ── Data ──
+data:
+  dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini
+  version: v1.0-mini
+  voxel_size: 0.05
+  point_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+
+# ── Augmentation ──
+augmentation:
+  enabled: true
+  random_rotate_z: true
+  random_flip_x: true
+  random_flip_y: true
+  random_scale_min: 0.95
+  random_scale_max: 1.05
+  random_translate_std: 0.1
+
+# ── Model ──
+model:
+  backbone_ckpt: models/nuscenes_openseg.pth.tar
+  backbone_dim: 768
+  hidden_dim: 256
+  num_classes: 16
+  num_thing_queries: 100
+  num_stuff_classes: 6
+  nheads: 8
+  dim_feedforward: 1024
+  num_blocks: 3
+  num_levels: 3
+  dropout: 0.0
+
+# ── Open-Vocab Architecture ──
+open_vocab:
+  enabled: true
+  token_dim: 768
+  token_mlp_layers: 3
+  region_pool_mode: contextual      # Use ContextualRegionPooler (context_weight=0.4)
+  context_weight: 0.4               # 60% local mask + 40% neighborhood context
+  temperature: null                 # learnable
+  num_prompt_templates: 7
+  compositional_prompts: true
+  # B12/N4 novel class indices (0-indexed): bicycle=1, bus=2, motorcycle=5, vegetation=15
+  novel_class_idx: [1, 2, 5, 15]
+
+# ── Scene Context Encoder (inserted at MinkUNet bottleneck) ──
+context_encoder:
+  dim: 256            # Must match backbone bottleneck channels
+  num_heads: 4        # 4-head attention over stride-16 voxels (~300-1500 tokens)
+  depth: 1            # 1 Transformer block (~1.2M params, fast)
+  use_pos_enc: true   # Inject 3D sinusoidal positional encoding before attention
+  lr: 5.0e-5          # Medium LR: faster than backbone, slower than decoder
+
+# ── E2E Backbone ──
+# Training from scratch — NO warmstart checkpoint.
+# Encoder (conv1-conv4) is UNFROZEN with a very low lr to allow E2E backprop.
+# Risk: with only 323 mini scenes this may overfit; monitor val PQ carefully.
+# unfreeze_encoder: true         → calls unfreeze_encoder_stages() after warmup
+# encoder_lr: 1.0e-7             → 50x lower than backbone decoder lr
+e2e:
+  enabled: true
+  unfreeze_mode: all              # Unfreeze encoder + decoder (not decoder_only)
+  backbone_lr: 5.0e-6             # Backbone decoder lr
+  encoder_lr: 1.0e-7              # Encoder lr — very low to avoid destroying CLIP geometry
+  unfreeze_after_epoch: 5         # Warmup decoder + ctx encoder first, then unfreeze encoder
+  unfreeze_encoder: true          # Set to false to revert to frozen encoder
+  warmstart_ckpt: null            # Train from scratch
+
+# ── Loss (paper-aligned: L = L_cls + L_mask + L_O + L_V) ──
+loss:
+  # L_cls: focal CE on base classes only (novel masked out)
+  weight_cls: 1.0
+  cost_class: 2.0
+  eos_coef: 0.1
+  # L_mask: BCE + Dice (unchanged)
+  weight_mask: 1.0
+  weight_dice: 1.0
+  cost_mask: 5.0
+  cost_dice: 5.0
+  # L_O: object-level distillation (1 - cos(v_q, w_q)) for matched queries
+  weight_object_distill: 1.0
+  # L_V: voxel-level distillation L1(F_rec, F_backbone) for ALL queries
+  # KEY for novel stuff (vegetation). Keep small to avoid training instability.
+  weight_voxel_distill: 0.1
+  # Standard
+  focal_gamma: 4.0
+  focal_alpha: 0.25
+  num_points: 50000
+  num_mask_pts: 500
+  p_ratio: 0.75
+
+# ── Training ──
+training:
+  epochs: 60
+  lr: 1.0e-4
+  weight_decay: 0.01
+  grad_clip: 0.5
+  grad_accum: 4
+  batch_size: 1
+  num_workers: 0
+  seed: 42
+  scheduler: cosine_warmup
+  warmup_epochs: 3
+  min_lr: 1.0e-6
+  mixed_precision: true
+
+# ── Logging ──
+logging:
+  log_every: 10
+  eval_every: 5
+  wandb_project: openscene-panoptic-openvocab
+  wandb_entity: null
+  wandb_enabled: true
+  wandb_run_name: mini_openvocab_e2e_b12n4
+
+# ── Checkpointing ──
+checkpoint:
+  save_dir: panoptic/checkpoints_openvocab_mini
+  save_every: 5
+  resume: null
+  auto_resume: true
+
+# ── Inference ──
+inference:
+  overlap_thr: 0.8
+  min_points: 50
+  clip_score_weight: 0.7
+  objectness_weight: 0.3
+
+# Class-agnostic masks + CLIP-aligned per-mask features.
+# Backbone unfrozen so features adapt to region-level CLIP alignment.
+#
+# Key differences from closed-set:
+#   1. No 16-class CE loss → objectness (3-way: thing/stuff/no-object)
+#   2. Token head supervised by mask-pooled backbone features (CLIP space)
+#   3. Backbone unfrozen with low LR for E2E feature adaptation
+#   4. Diverse text augmentation for contrastive alignment
+
+# ── Data ──
+data:
+  dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini
+  version: v1.0-mini
+  voxel_size: 0.05
+  point_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+
+# ── Augmentation ──
+augmentation:
+  enabled: true
+  random_rotate_z: true
+  random_flip_x: true
+  random_flip_y: true
+  random_scale_min: 0.95
+  random_scale_max: 1.05
+  random_translate_std: 0.1
+
+# ── Model ──
+model:
+  backbone_ckpt: models/nuscenes_openseg.pth.tar
+  backbone_dim: 768
+  hidden_dim: 256
+  num_classes: 16        # still 16 for GT mask assignment, but NOT for classification
+  num_thing_queries: 100
+  num_stuff_classes: 6
+  nheads: 8
+  dim_feedforward: 1024
+  num_blocks: 3
+  num_levels: 3
+  dropout: 0.0
+
+# ── Open-Vocab Architecture ──
+open_vocab:
+  enabled: true
+  # Token head output dim (CLIP space)
+  token_dim: 768
+  # Token head depth (MLP layers)
+  token_mlp_layers: 3
+  # Region feature pooling: "mean" or "weighted_mean" (mask-weighted)
+  region_pool_mode: weighted_mean
+  # Temperature for contrastive loss (learnable if null, fixed if float)
+  temperature: null
+  # Number of text prompt templates per class for diversity
+  num_prompt_templates: 7
+  # Whether to add compositional prompts ("a {color} {class} near {context}")
+  compositional_prompts: true
+  # Negative mining: sample hard negatives from other classes
+  hard_negatives: true
+  # Objectness mode: "binary" (thing vs no-object) or "ternary" (thing/stuff/no-object)
+  objectness_mode: ternary
+
+# ── E2E Backbone ──
+e2e:
+  enabled: true
+  unfreeze_mode: decoder_only    # Start conservative; can try "all" later
+  unfreeze_last_n: 2
+  backbone_lr: 5.0e-6           # Very low — preserve CLIP alignment
+  unfreeze_after_epoch: 3       # Warm up decoder first
+  warmstart_ckpt: panoptic/checkpoints/best.pth
+
+# ── Loss ──
+loss:
+  # Mask losses (unchanged)
+  weight_mask: 5.0
+  weight_dice: 5.0
+  cost_mask: 5.0
+  cost_dice: 5.0
+  # Objectness loss (replaces CE over 16 classes)
+  weight_objectness: 2.0
+  eos_coef: 0.1                 # Weight for no-object class in objectness
+  # Region-CLIP alignment loss
+  weight_region_clip: 4.0       # Strong — this is the main classification signal
+  # Optional: auxiliary semantic loss (soft, from text similarity)
+  weight_aux_semantic: 1.0
+  # Matcher costs (class cost uses objectness, not 16-class)
+  cost_class: 2.0
+  # Standard
+  focal_gamma: 4.0
+  focal_alpha: 0.25
+  num_points: 50000
+  num_mask_pts: 500
+  p_ratio: 0.75
+
+# ── Training ──
+training:
+  epochs: 60
+  lr: 1.0e-4
+  weight_decay: 0.01
+  grad_clip: 0.5
+  grad_accum: 4
+  batch_size: 1
+  num_workers: 0
+  seed: 42
+  scheduler: cosine_warmup
+  warmup_epochs: 3
+  min_lr: 1.0e-6
+  mixed_precision: true
+
+# ── Logging ──
+logging:
+  log_every: 10
+  eval_every: 5
+  wandb_project: openscene-panoptic-openvocab
+  wandb_entity: null
+  wandb_enabled: true
+  wandb_run_name: mini_openvocab_e2e
+
+# ── Checkpointing ──
+checkpoint:
+  save_dir: panoptic/checkpoints_openvocab_mini
+  save_every: 5
+  resume: null
+  auto_resume: true
+
+# ── Inference ──
+inference:
+  overlap_thr: 0.8
+  min_points: 50
+  # Open-vocab inference: score = objectness * clip_similarity
+  clip_score_weight: 0.7
+  objectness_weight: 0.3

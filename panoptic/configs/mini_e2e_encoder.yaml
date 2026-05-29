@@ -1,0 +1,101 @@
+# ─── E2E Encoder Unfreezing — nuScenes Mini ─────────────────────────────────
+# Unfreezes the DisNet backbone encoder with differential learning rates.
+# Decoder LR = 1e-4 (standard), Backbone LR = 1e-5 (10x lower).
+# Start from best frozen-backbone checkpoint to warm-start.
+
+# ── Data ──
+data:
+  dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini
+  version: v1.0-mini
+  voxel_size: 0.05
+  point_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+
+# ── Augmentation ──
+augmentation:
+  enabled: true
+  random_rotate_z: true
+  random_flip_x: true
+  random_flip_y: true
+  random_scale_min: 0.95
+  random_scale_max: 1.05
+  random_translate_std: 0.1
+
+# ── Model ──
+model:
+  backbone_ckpt: models/nuscenes_openseg.pth.tar
+  backbone_dim: 768
+  hidden_dim: 256
+  num_classes: 16
+  num_thing_queries: 100
+  num_stuff_classes: 6
+  nheads: 8
+  dim_feedforward: 1024
+  num_blocks: 3
+  num_levels: 3
+  dropout: 0.0
+
+# ── E2E Encoder Config ──
+e2e:
+  enabled: true
+  # Which backbone layers to unfreeze: "all", "decoder_only", "last_n_stages"
+  unfreeze_mode: decoder_only
+  # Number of encoder stages to unfreeze from the end (if unfreeze_mode=last_n_stages)
+  unfreeze_last_n: 2
+  # Backbone learning rate (differential LR)
+  backbone_lr: 1.0e-5
+  # Epoch to start unfreezing (0 = from the beginning, >0 = freeze first N epochs)
+  unfreeze_after_epoch: 5
+  # Warm-start from frozen-backbone checkpoint
+  warmstart_ckpt: panoptic/checkpoints/best.pth
+
+# ── Loss ──
+loss:
+  focal_gamma: 4.0
+  focal_alpha: 0.25
+  eos_coef: 0.1
+  weight_ce: 2.0
+  weight_mask: 5.0
+  weight_dice: 5.0
+  cost_class: 2.0
+  cost_mask: 5.0
+  cost_dice: 5.0
+  num_points: 50000
+  num_mask_pts: 500
+  p_ratio: 0.75
+
+# ── Training ──
+training:
+  epochs: 50
+  lr: 1.0e-4
+  weight_decay: 0.01
+  grad_clip: 0.5
+  grad_accum: 4
+  batch_size: 1
+  num_workers: 0
+  seed: 42
+  scheduler: cosine_warmup
+  warmup_epochs: 2
+  min_lr: 1.0e-6
+
+  mixed_precision: true
+
+# ── Logging ──
+logging:
+  log_every: 10
+  eval_every: 5
+  wandb_project: openscene-panoptic-e2e
+  wandb_entity: null
+  wandb_enabled: true
+  wandb_run_name: mini_e2e_decoder_only
+
+# ── Checkpointing ──
+checkpoint:
+  save_dir: panoptic/checkpoints_e2e_mini
+  save_every: 5
+  resume: null
+  auto_resume: true
+
+# ── Inference ──
+inference:
+  overlap_thr: 0.8
+  min_points: 50

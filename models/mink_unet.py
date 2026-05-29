@@ -269,6 +269,96 @@ class MinkUNetBase(ResNetBase):
 
         return self.final(out).F
 
+    def forward_with_context(self, x, context_encoder, pos_enc=None):
+        """Forward pass that injects a context encoder at the stride-16 bottleneck.
+
+        Runs the encoder exactly as forward(), then applies context_encoder
+        on the bottleneck features (N_bn, 256) BEFORE the decoder starts.
+        This is the correct insertion point: small N (~300-1500) and the 256-d
+        bottleneck matches SceneContextEncoder(dim=256).
+
+        Args:
+            x: ME.SparseTensor input
+            context_encoder: SceneContextEncoder(dim=256, ...) callable
+            pos_enc: VoxelPositionalEncoding (optional), applied before attention
+        Returns:
+            (N, out_channels) dense feature tensor, same as forward()
+        """
+        out = self.conv0p1s1(x)
+        out = self.bn0(out)
+        out_p1 = self.relu(out)
+
+        out = self.conv1p1s2(out_p1)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out_b1p2 = self.block1(out)
+
+        out = self.conv2p2s2(out_b1p2)
+        out = self.bn2(out)
+        out = self.relu(out)
+        out_b2p4 = self.block2(out)
+
+        out = self.conv3p4s2(out_b2p4)
+        out = self.bn3(out)
+        out = self.relu(out)
+        out_b3p8 = self.block3(out)
+
+        # tensor_stride=16 (bottleneck)
+        out = self.conv4p8s2(out_b3p8)
+        out = self.bn4(out)
+        out = self.relu(out)
+        out = self.block4(out)
+
+        # ── Context encoder inserted HERE at bottleneck ──────────────────
+        # out.F: (N_bn, 256) where N_bn ≈ 300-1500 at stride-16
+        batch_idx = out.C[:, 0].long()
+        bn_feats = out.F
+        if pos_enc is not None:
+            coords_xyz = out.C[:, 1:].float() * out.tensor_stride[0]
+            bn_feats = pos_enc(bn_feats, coords_xyz)
+        bn_feats = context_encoder(bn_feats, batch_idx)
+        # Write updated features back into sparse tensor
+        out = ME.SparseTensor(
+            features=bn_feats,
+            coordinate_map_key=out.coordinate_map_key,
+            coordinate_manager=out.coordinate_manager,
+        )
+        # ─────────────────────────────────────────────────────────────────
+
+        # tensor_stride=8
+        out = self.convtr4p16s2(out)
+        out = self.bntr4(out)
+        out = self.relu(out)
+
+        out = ME.cat(out, out_b3p8)
+        out = self.block5(out)
+
+        # tensor_stride=4
+        out = self.convtr5p8s2(out)
+        out = self.bntr5(out)
+        out = self.relu(out)
+
+        out = ME.cat(out, out_b2p4)
+        out = self.block6(out)
+
+        # tensor_stride=2
+        out = self.convtr6p4s2(out)
+        out = self.bntr6(out)
+        out = self.relu(out)
+
+        out = ME.cat(out, out_b1p2)
+        out = self.block7(out)
+
+        # tensor_stride=1
+        out = self.convtr7p2s2(out)
+        out = self.bntr7(out)
+        out = self.relu(out)
+
+        out = ME.cat(out, out_p1)
+        out = self.block8(out)
+
+        return self.final(out).F
+
 class MinkUNet14(MinkUNetBase):
     """MinkUNet with 14-layer depth using BasicBlock (1 block per stage).
 
