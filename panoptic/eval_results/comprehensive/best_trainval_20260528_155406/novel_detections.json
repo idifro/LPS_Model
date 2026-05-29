@@ -1,0 +1,104 @@
+{
+  "backbone_pool_v2": {
+    "police car": {
+      "voxels": 0
+    },
+    "ambulance": {
+      "voxels": 0
+    },
+    "trash cans": {
+      "voxels": 41805
+    },
+    "pole": {
+      "voxels": 23867525
+    },
+    "bench": {
+      "voxels": 0
+    }
+  },
+  "geometric_ensemble": {
+    "police car": {
+      "voxels": 726
+    },
+    "ambulance": {
+      "voxels": 0
+    },
+    "trash cans": {
+      "voxels": 7249
+    },
+    "pole": {
+      "voxels": 165142
+    },
+    "bench": {
+      "voxels": 0
+    }
+  },
+  "geo_ensemble_v2": {
+    "police car": {
+      "voxels": 10894
+    },
+    "ambulance": {
+      "voxels": 296281
+    },
+    "trash cans": {
+      "voxels": 20703
+    },
+    "pole": {
+      "voxels": 843
+    },
+    "bench": {
+      "voxels": 1937
+    }
+  },
+  "voxel_vote": {
+    "police car": {
+      "voxels": 787865
+    },
+    "ambulance": {
+      "voxels": 629947
+    },
+    "trash cans": {
+      "voxels": 31001
+    },
+    "pole": {
+      "voxels": 60948
+    },
+    "bench": {
+      "voxels": 305571
+    }
+  },
+  "logit_aggregation": {
+    "police car": {
+      "voxels": 10181
+    },
+    "ambulance": {
+      "voxels": 274034
+    },
+    "trash cans": {
+      "voxels": 19347
+    },
+    "pole": {
+      "voxels": 603
+    },
+    "bench": {
+      "voxels": 1360
+    }
+  },
+  "confidence_gated": {
+    "police car": {
+      "voxels": 102728
+    },
+    "ambulance": {
+      "voxels": 36524
+    },
+    "trash cans": {
+      "voxels": 22828
+    },
+    "pole": {
+      "voxels": 88946
+    },
+    "bench": {
+      "voxels": 23012
+    }
+  }
+}

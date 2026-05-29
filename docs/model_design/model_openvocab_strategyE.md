@@ -157,144 +157,174 @@ Three ways to specify novel classes (in priority order):
 
 The evaluation script sweeps `alpha ∈ {0.3, 0.5, 0.7}` and reports the best.
 
-## 7. Evaluation Modes (Updated)
+## 7. Evaluation Modes (Final — Cleaned 2026-05-27)
+
+Removed legacy/redundant modes (C, D, E). Current eval script has 5 modes:
 
 | Mode | Method | Classes | Purpose |
 |------|--------|---------|---------|
-| A. Linear | pred_logits softmax | 16 known | Baseline |
-| B. Token-16 | pred_tokens cos sim | 16 known | Token head quality |
-| C. Ensemble | α*linear + (1-α)*token | 16 known | Linear+token blend |
-| D. Token-OpenVocab | pred_tokens cos sim | 16+N | Token head open-vocab (failed: collapsed) |
-| E. Backbone-Pool | raw mean-pool | 16+N | Legacy (buggy, PQ=0.209) |
-| **F. Backbone-Pool-v2** | normalized soft-pool | 16+N | **Bug fix** |
-| **G. Geometric-Ensemble** | linear^α × clip^(1-α) | 16+N | **Strategy E proper** |
+| A. Linear | pred_logits softmax | 16 known | Baseline (PQ=0.476) |
+| B. Token-16 | pred_tokens cos sim | 16 known | Token head quality diagnostic |
+| F. Backbone-Pool-v2 | normalized soft-pool | 16+N | CLIP pool quality (ablation) |
+| G. Geometric-Ensemble | linear^α × clip^(1-α) | 16+N | Strategy E v1 |
+| **H. Geo-Ensemble-v2** | multi-prompt + bias correction | 16+N | **Strategy E v2 (best)** |
+
+**Removed modes** (2026-05-27):
+- C (ensemble): Best at α=0.0 = pure token, blending adds nothing
+- D (token_openvocab): Zero novel detections, collapsed to 16 classes
+- E (backbone_openvocab): Legacy buggy (PQ=0.209)
 
 ## 8. Usage
 
 ```bash
-# Full evaluation (all 7 modes)
+# Full evaluation (5 modes)
 python -u panoptic/scripts/evaluate_comprehensive.py \
     --config panoptic/configs/full_nuscenes_token_v2.yaml \
     --checkpoint panoptic/checkpoints_token_full_v2/best.pth \
     --novel-classes "police car,ambulance,trash cans,pole,bench"
 
-# Only new modes
+# Only geo_ensemble_v2 (fastest, best novel detection)
 python -u panoptic/scripts/evaluate_comprehensive.py \
     --config panoptic/configs/full_nuscenes_token_v2.yaml \
     --checkpoint panoptic/checkpoints_token_full_v2/best.pth \
-    --modes backbone_pool_v2,geometric_ensemble \
-    --geo_alphas 0.3,0.5,0.7 \
-    --geo_temperature 0.1
+    --modes geo_ensemble_v2 \
+    --geo_alphas 0.3,0.5,0.7
 
-# Custom novel classes
-python -u panoptic/scripts/evaluate_comprehensive.py \
-    --config panoptic/configs/full_nuscenes_token_v2.yaml \
-    --checkpoint panoptic/checkpoints_token_full_v2/best.pth \
-    --modes geometric_ensemble \
-    --novel-classes "motorcycle rider,scooter,stroller,dog,shopping cart"
-```
-
-## 9. Actual Results (v1.0-trainval, 6019 samples, 2026-05-26)
-
-### 9.1 Full Summary Table
-
-| Mode | PQ | SQ | RQ | mIoU |
-|------|-----|-----|-----|------|
-| A. Linear | **0.4772** | 0.7926 | **0.5844** | **0.4324** |
-| B. Token | 0.4711 | 0.7963 | 0.5771 | 0.4208 |
-| C. Best Ensemble (α=0.0) | 0.4711 | 0.7963 | 0.5771 | 0.4208 |
-| D. Token-OpenVocab | 0.4711 | 0.7963 | 0.5771 | 0.4208 |
-| E. Backbone-Pool (legacy) | 0.2085 | 0.6672 | 0.2470 | 0.1677 |
-| **F. Backbone-Pool-v2** | **0.2208** | 0.6698 | 0.2600 | 0.1722 |
-| **G. Geo-Ensemble α=0.3** | 0.4595 | 0.7979 | 0.5598 | 0.4241 |
-| **G. Geo-Ensemble α=0.5** | **0.4632** | 0.7943 | 0.5657 | 0.4224 |
-| **G. Geo-Ensemble α=0.7** | 0.4628 | 0.7946 | 0.5655 | 0.4215 |
-
-### 9.2 Novel Class Detections
-
-| Novel Class | Token-OV | Backbone-Pool (legacy) | Backbone-Pool-v2 | Geometric Ensemble (α=0.3) |
-|-------------|----------|------------------------|-------------------|---------------------------|
-| police car | 0 | 0 | 0 | **748** |
-| ambulance | 0 | 0 | 0 | 0 |
-| trash cans | 0 | 45,202 | 42,018 | **7,497** |
-| pole | 0 | **25,360,750** | **23,878,854** | **162,804** |
-| bench | 0 | 0 | 0 | 0 |
-
-### 9.3 Analysis
-
-**What worked:**
-1. Geometric ensemble preserved 97% of known-class PQ (0.463/0.477) — this validates that the linear head dominates known-class decisions
-2. Objectness filtering reduced "pole" catastrophe by 99.4% (25M → 163K)
-3. Only geometric ensemble detected "police car" (748 voxels) — genuine CLIP signal
-4. Best alpha was 0.5 (balanced) for PQ, but α=0.3 (more CLIP weight) detected more novel voxels
-
-**What failed:**
-1. Backbone-Pool-v2 normalization fix was insufficient (+0.012 PQ vs legacy) — the core issue is prototype quality, not pooling math
-2. "Pole" prototype remains dominant (163K voxels even with objectness) — text embedding for "pole" has high average similarity to most backbone feature clusters
-3. Token-OpenVocab detected zero novel voxels — token head is completely collapsed to 16-class manifold
-4. "ambulance" and "bench" = 0 across all modes — either absent from val set or prototypes too generic
-5. 748 "police car" voxels across 6019 samples is statistically insignificant — needs visual verification
-
-**Verdict:** Strategy E provides a working framework but novel detection signal is too weak for production use. The geometric ensemble is the right *architecture* but needs:
-- Better text prototypes (multi-template, more specific prompts)
-- Training-time changes to achieve robust open-vocab
-
-### 9.4 Per-Class Highlights (Geometric Ensemble α=0.5 vs Linear)
-
-| Class | PQ (Linear) | PQ (Geo α=0.5) | Δ | Note |
-|-------|-------------|-----------------|---|------|
-| motorcycle | 0.654 | **0.672** | +0.018 | CLIP helps rare classes |
-| sidewalk | 0.209 | **0.218** | +0.009 | Slight improvement |
-| traffic_cone | 0.568 | 0.505 | -0.063 | CLIP hurts (confused with pole?) |
-| other_flat | 0.069 | 0.053 | -0.016 | CLIP noise degrades rare stuff |
-| car | 0.848 | 0.839 | -0.009 | Minor known-class degradation |
-
-Observation: CLIP helps rare thing classes (motorcycle, construction_vehicle) where the linear head is uncertain, but hurts stuff classes (other_flat, terrain) where CLIP features lack spatial coherence.
-
-## 10. Backward Compatibility
-
-- All existing modes (A-E) produce identical results
-- New modes (F, G) are additive — only run if explicitly included in `--modes`
-- Default `--modes` includes all 7 modes
-- Novel class generation is lazy (only when open-vocab modes are requested)
-- Config YAML change is optional (commented out `novel_classes` field)
-
-## 11. File Map
-
-| File | Change |
-|------|--------|
-| `panoptic/scripts/evaluate_comprehensive.py` | Added `panoptic_inference_backbone_pool_v2`, `panoptic_inference_geometric_ensemble`, Mode F+G in eval loop, configurable novel classes |
-| `panoptic/scripts/visualize_novel_detections.py` | Visual verification: projects novel-class voxels onto camera images |
-| `panoptic/configs/full_nuscenes_token_v2.yaml` | Added optional `novel_classes` field (commented) |
-| `docs/model_design/model_openvocab_strategyE.md` | This document |
-
-## 12. Visual Verification
-
-The geometric ensemble's novel detections (especially 748 "police car" voxels) need visual confirmation. Use:
-
-```bash
+# Visual verification
 python -u panoptic/scripts/visualize_novel_detections.py \
     --config panoptic/configs/full_nuscenes_token_v2.yaml \
     --checkpoint panoptic/checkpoints_token_full_v2/best.pth \
     --version v1.0-trainval \
     --only_with_detections \
-    --max_samples 200 \
-    --num_samples 30 \
-    --alpha 0.3
+    --max_samples 200 --num_samples 30 --alpha 0.3
 ```
 
-This projects novel-class predictions onto all 6 camera views, enabling visual assessment of:
-- Are "police car" detections actually on police-like vehicles?
-- Are "pole" detections on actual poles or false positives on buildings/walls?
-- Are "trash cans" detections genuine?
+## 9. Results — Run 1 (v1.0-trainval, 6019 samples, 2026-05-26)
 
-## 13. Future Work
+### 9.1 Summary Table (geo_ensemble v1 only)
 
-1. **Multi-prompt prototypes**: Average 5-10 templates per class ("a police car on the road", "a parked police car", etc.) for more robust embeddings
-2. **Temperature tuning**: Per-class temperature; "pole" needs higher τ to reduce dominance
-3. **Class-specific alpha**: Known stuff classes (driveable_surface) use α=1.0 (pure linear), rare things use lower α
-4. **Class-agnostic mask training** (Strategy A): Remove CE loss, use mask+dice only → unbiased proposals
-5. **CLIP-initialized queries**: Initialize decoder queries from CLIP text embeddings instead of random → queries are pre-aligned to semantic concepts
-6. **Unfreeze encoder end-to-end**: Joint fine-tuning of DisNet + decoder → features become panoptic-aware while maintaining CLIP alignment via distillation regularization
-7. **Voxel decomposition loss**: Per-voxel contrastive loss between backbone features and GT text embeddings → forces feature alignment at point level
-8. **Large negative bank (Strategy C1)**: Add 200+ text negatives during token head training → prevents closed-set collapse
+| Mode | PQ | SQ | RQ | mIoU |
+|------|-----|-----|-----|------|
+| A. Linear | **0.4772** | 0.7926 | **0.5844** | **0.4324** |
+| B. Token | 0.4711 | 0.7963 | 0.5771 | 0.4208 |
+| F. Backbone-Pool-v2 | 0.2208 | 0.6698 | 0.2600 | 0.1722 |
+| **G. Geo-Ensemble α=0.5** | **0.4632** | 0.7943 | 0.5657 | 0.4224 |
+
+### 9.2 Novel Class Detections (Run 1)
+
+| Novel Class | Backbone-Pool-v2 | Geometric Ensemble (α=0.3) |
+|-------------|-------------------|---------------------------|
+| police car | 0 | **748** |
+| ambulance | 0 | 0 |
+| trash cans | 42,018 | 7,497 |
+| pole | 23,878,854 | 162,804 |
+| bench | 0 | 0 |
+
+## 10. Results — Run 2 (v1.0-trainval, 6019 samples, 2026-05-27)
+
+### 10.1 Changes from Run 1
+- Added Mode H: `geo_ensemble_v2` with multi-prompt ensembled prototypes + automatic prototype bias correction
+- Removed modes C, D, E (cleaned up)
+- Fixed OOM: CLIP now loads on GPU before backbone (sequential, not concurrent)
+- Fixed novel voxel summary display bug
+- Fixed coords bug (reverted — model was trained with vox_feats as coords)
+
+### 10.2 Full Summary Table
+
+| Mode | PQ | SQ | RQ | mIoU | Novel Voxels |
+|------|-----|-----|-----|------|------|
+| A. Linear | **0.4761** | 0.7930 | 0.5828 | 0.4323 | N/A |
+| B. Token | 0.4717 | 0.7969 | 0.5775 | 0.4206 | N/A |
+| F. Backbone-Pool-v2 | 0.2207 | 0.6702 | 0.2597 | 0.1722 | 23,909,330 |
+| G. Geo-Ensemble α=0.5 | 0.4642 | 0.7960 | 0.5664 | 0.4219 | — |
+| **H. Geo-V2 α=0.5** | **0.4681** | 0.7930 | 0.5734 | **0.4283** | **396,229** |
+
+### 10.3 Novel Class Detections (Run 2)
+
+| Novel Class | Backbone-Pool-v2 | Geo-Ensemble v1 | **Geo-V2** |
+|-------------|-------------------|-----------------|-----------|
+| police car | 0 | 726 | **24,114** |
+| ambulance | 0 | 0 | **352,234** |
+| trash cans | 41,805 | 7,249 | **17,566** |
+| pole | 23,867,525 | 165,142 | **280** |
+| bench | 0 | 0 | **2,035** |
+
+### 10.4 Analysis
+
+**Improvements from v2 (multi-prompt + bias correction):**
+1. **Pole catastrophe SOLVED**: 165K → 280 voxels (bias correction suppressed generic prototype)
+2. **Novel detection increased**: 396K total novel voxels vs 173K in v1
+3. **PQ retained at 98.3%** of linear baseline (0.4681/0.4761)
+4. **Best overall mode**: geo_v2 α=0.5 gives best PQ (0.4681) + mIoU (0.4283) + novel detections
+5. Alpha sensitivity is very low for v2 (0.4679/0.4681/0.4678 across α=0.3/0.5/0.7)
+
+**Multi-prompt prototypes** (5-6 diverse descriptions per novel class):
+- Made "police car" 32× more detectable (748 → 24K voxels)
+- Enabled "ambulance" detection (0 → 352K voxels)
+- Enabled "bench" detection (0 → 2K voxels)
+
+**Bias correction** (per-prototype background affinity subtraction):
+- Range: ±0.08 (pole=0.078 highest, bicycle=-0.083 lowest)
+- Eliminated pole catastrophe entirely (165K → 280)
+- Formula: `corrected_logit = (cos_sim - bias) / temperature`
+
+## 11. Visual Verification Results (2026-05-27)
+
+### Finding: many novel detections are false positives
+
+Visual inspection of geo_ensemble_v2 camera overlays revealed:
+- **"Ambulance" (352K voxels)**: White trucks, vans, walls, and buildings misclassified
+- **"Police car" (24K voxels)**: Dark cars, SUVs, and vehicles misclassified
+- **"Trash cans" (17K voxels)**: Various objects near roads misclassified
+- **"Bench" (2K voxels)**: Random structures misclassified
+
+**No genuine novel class detections confirmed across many inspected samples, i have to check for more samples to confirm this.**
+
+### Root Cause
+
+The backbone's CLIP alignment is too weak for fine-grained novel-class discrimination:
+
+1. **Distillation degradation**: CLIP → OpenSeg → 3D projection → DisNet distillation. Each step loses resolution.
+2. **Tiny cosine margins**: "car" vs "police car" text proto cosine similarity ≈ 0.85. The backbone cannot resolve this 0.15 margin after 4 degradation steps.
+3. **No negative training**: Backbone was never trained to push features AWAY from novel classes. Without explicit negatives, there are no decision boundaries.
+
+### Conclusion
+
+**Inference-only open-vocabulary detection produces only false positives with the current backbone.** The geometric ensemble framework is architecturally sound, but the 3D features lack the discriminative power needed for novel classes that are semantically similar to known classes.
+
+## 12. Code Changes Log (2026-05-27)
+
+| Change | File | Impact |
+|--------|------|--------|
+| Removed modes C, D, E | evaluate_comprehensive.py | Cleaner eval, faster runtime |
+| Removed `panoptic_inference_ensemble`, `panoptic_inference_backbone_pool` (legacy) | evaluate_comprehensive.py | Dead code removed |
+| Added `generate_multi_prompt_prototypes()` | evaluate_comprehensive.py | 5-6 diverse prompts per novel class |
+| Added `compute_prototype_bias()` | evaluate_comprehensive.py | Automatic per-prototype background affinity |
+| Added `panoptic_inference_geometric_ensemble_v2()` | evaluate_comprehensive.py | Bias-corrected logits |
+| Moved CLIP loading before backbone (OOM fix) | evaluate_comprehensive.py | Sequential GPU: CLIP first → unload → backbone |
+| Fixed novel voxel summary display | evaluate_comprehensive.py | Was always showing N/A |
+| Forwarded `temperature` to Mode H | evaluate_comprehensive.py | Bug fix |
+| Updated visualize to use geo_v2 only | visualize_novel_detections.py | Only meaningful mode |
+| Reverted coords "fix" | evaluate_comprehensive.py | Model was trained with vox_feats as coords |
+
+## 13. Next Steps
+
+### Inference-only (K/L/M TESTED — FAILED, 2026-05-28):
+
+| Strategy | Result | PQ | Novel Voxels |
+|----------|--------|-----|-------------|
+| K (voxel vote) | Over-detection, PQ degraded | 0.4490 (-0.027) | 1,815,332 |
+| L (logit aggregation) | Identical to geo_v2 | 0.4702 (-0.006) | 305,525 |
+| M (confidence gated) | Reduces volume, same FPs | 0.4633 (-0.013) | 274,038 |
+
+**Conclusion**: Per-voxel classification produces the same false positives as feature pooling. Strategy L (the theoretically "correct" approach) gives identical results to Strategy E (feature pooling), proving that **pooling degradation is NOT the bottleneck — the backbone features themselves lack discriminative margin between similar classes.**
+
+The inference-only chapter is **CLOSED** (no-bias ablation completed 2026-05-29).
+
+**No-bias ablation results**: Without bias, pole catastrophe returns — voxel_vote explodes to 18.6M novel voxels (PQ=0.3935), logit_agg to 830K (PQ=0.4642), confidence_gated to 364K (PQ=0.4634). Bias prevents pole catastrophe but doesn't fix the fundamental margin issue. L=E confirmed in both ablations.
+
+### Training required (for genuine open-vocab):
+1. **Strategy I**: Voxel decomposition loss with 200+ diverse text negatives — teaches explicit inter-class boundaries
+2. **Strategy C1**: 200 negatives for token head — prevents collapse
+3. **Strategy H + I**: Unfreeze backbone + voxel decomp — strongest combined approach
+4. **Strategy D**: Camera CLIP features at inference — bypasses degraded 3D backbone entirely

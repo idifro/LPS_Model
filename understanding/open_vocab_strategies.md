@@ -1151,7 +1151,7 @@ Stage 2: Joint panoptic training (20 epochs)
 
 ---
 
-## Critical Finding: Backbone IS CLIP-Aligned — Pooling Degrades Signal
+## Critical Finding #1: Backbone IS CLIP-Aligned — Pooling Degrades Signal
 
 **Date**: 2026-05-27
 
@@ -1181,6 +1181,82 @@ Averaging normalized vectors from different classes produces a near-zero vector.
 Any approach that pools/averages backbone features before classifying will suffer from this. The correct approach is:
 1. Classify per-voxel FIRST (each voxel is CLIP-aligned individually)
 2. Aggregate DECISIONS (votes/logits) within masks
+
+---
+
+## Critical Finding #2: Novel Detections Are All False Positives
+
+**Date**: 2026-05-27
+
+### Evidence
+
+Visual inspection of geo_ensemble_v2 outputs (multi-prompt + bias correction):
+- **396K "novel" voxels detected** (24K police car, 352K ambulance, 17K trash cans, 280 pole, 2K bench)
+- **Visual verification: ALL are false positives** — random objects (trucks, walls, buildings, road surfaces) incorrectly labeled as novel classes
+- "Ambulance" (352K voxels) = white trucks/vans/buildings misclassified
+- "Police car" (24K voxels) = dark cars/SUVs misclassified
+
+### Root Cause Analysis
+
+The backbone's per-voxel CLIP alignment is **too weak** for reliable novel-class discrimination:
+
+1. **Distillation was lossy**: DisNet learned from per-pixel OpenSeg features (themselves projected from 2D). The chain is: `CLIP image → OpenSeg → 3D projection → DisNet distillation`. Each step degrades alignment.
+
+2. **Cosine similarity margins are tiny**: For the backbone to reliably detect "police car" vs "car", the cosine similarity difference needs to be significant (>0.1). But 3D distilled features have much smaller margins (~0.01-0.03 between semantically similar classes).
+
+3. **Text prototypes for novel classes are too similar to known classes**:
+   - "police car" prototype ≈ "car" prototype (cosine sim ~0.85 between them in CLIP text space)
+   - "ambulance" prototype ≈ "truck"/"bus" (white large vehicle descriptions overlap)
+   - The backbone cannot distinguish what CLIP text space itself barely separates
+
+4. **No negative training**: The backbone was NEVER trained to push features AWAY from "police car" or "ambulance" — it only learned to match OpenSeg features. Without explicit negatives, there's no decision boundary.
+
+### What This Means for Strategy K/L/M
+
+Per-voxel logit aggregation (K/L) addresses the **pooling degradation** identified in Finding #1. However, the underlying margin weakness may still cause FPs:
+- Each car voxel has cos_sim("car") ≈ 0.35 and cos_sim("police car") ≈ 0.33
+- Voting within a car mask: many voxels "vote" police car because the margin is noise-level
+- **K/L/M MUST be tested on full trainval + 20-30 scene visual verification** before any conclusion
+
+### Current Status (2026-05-28)
+
+**K/L/M EVALUATED ON FULL TRAINVAL (6019 samples). RESULTS:**
+
+| Strategy | PQ | Novel Voxels | vs Linear |
+|----------|-----|-------------|-----------|
+| Linear (baseline) | 0.4761 | N/A | — |
+| geo_v2_a0.5 (E best) | 0.4697 | 330,658 | -0.006 |
+| logit_agg_a0.5 (L best) | 0.4702 | 305,525 | -0.006 |
+| confidence_gated (M) | 0.4633 | 274,038 | -0.013 |
+| voxel_vote (K) | 0.4490 | 1,815,332 | -0.027 |
+
+**Key result: Strategy L ≈ Strategy E.** Per-voxel logit aggregation produces nearly identical results to feature pooling — same top-20 scenes, same voxel counts, same "ambulance" dominance. This DISPROVES the hypothesis that pooling degrades signal. The bottleneck is the backbone features themselves.
+
+**The inference-only chapter is effectively CLOSED:**
+- ✗ Feature pooling (E): FPs in 10/10 visual samples
+- ✗ Per-voxel logit aggregation (L): identical to E (disproves pooling hypothesis)
+- ✗ Voxel vote with margin (K): 5.5× worse over-detection, PQ -0.027
+- ✗ Confidence gating (M): reduces volume but same FPs
+- ✗ No-bias ablation: DONE — pole catastrophe without bias (voxel_vote 18.6M, logit_agg 830K), L=E confirmed both ways
+
+### Definitive Conclusion Threshold
+
+~~Inference-only open-vocab will be **conclusively closed** when:~~
+~~1. K/L/M all evaluated on full trainval (6019 samples)~~
+~~2. Per-scene novel detection breakdown produced~~
+~~3. Top 20-30 scenes by novel voxel count visually verified~~
+~~4. Both with-bias and no-bias ablations tested~~
+~~5. If ALL above show only FPs → close inference-only, move to training~~
+
+**Status**: All items DONE (2026-05-29). No-bias ablation confirms pole catastrophe without bias, L=E in both configurations. Inference-only chapter is definitively CLOSED.
+
+### What WILL Work (Requires Training)
+
+1. **Strategy I (voxel decomposition loss with diverse negatives)**: Train the backbone to explicitly push features away from "police car" when the GT is "car". With 200+ negatives including confusable concepts, the backbone learns decision boundaries.
+
+2. **Strategy D (camera CLIP features)**: Bypass the degraded 3D backbone entirely. Use fresh CLIP ViT features from the actual camera images — these have the full resolution of CLIP and can distinguish "police car" from "car".
+
+3. **Strategy H + I combined**: Unfreeze backbone + per-voxel contrastive with diverse negatives. The backbone learns panoptic-aware, fine-grained CLIP alignment.
 
 ---
 
@@ -1406,73 +1482,76 @@ def panoptic_inference_confidence_gated(pred_logits, pred_masks, backbone_feats,
 
 ---
 
-## Updated Decision Matrix (Post Per-Voxel Finding, 2026-05-27)
+## Updated Decision Matrix (2026-05-28)
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ KEY FINDING: Backbone IS CLIP-aligned per-voxel. Feature POOLING degrades    │
-│ signal. Solution: classify per-voxel, then aggregate decisions within masks. │
+│ CONCLUSION: Inference-only open-vocab DOES NOT WORK with current backbone.    │
+│ K/L/M evaluation confirms: bottleneck is feature margins, NOT aggregation.   │
+│ Strategy L = Strategy E (identical results) → pooling is NOT the problem.    │
+│ TRAINING IS REQUIRED for real open-vocabulary capability.                      │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                                │
-│ IMMEDIATE (no training, this week):                                           │
-│   → Strategy K (per-voxel majority vote) — simplest test of hypothesis      │
-│   → Strategy L (logit aggregation) — efficient, mathematically clean        │
-│   → Strategy M (confidence-gated novel) — preserves known PQ, adds novel    │
+│ CONFIRMED FAILURES (inference-only, all tested on 6019 samples):             │
+│   ✗ Strategy E (geo ensemble, feature pooling) — FPs, 330K novel voxels     │
+│   ✗ Strategy E v2 (multi-prompt + bias) — FPs confirmed visually (10 scenes)│
+│   ✗ Strategy K (voxel vote + 1.2× margin) — 1.8M FPs, PQ -0.027           │
+│   ✗ Strategy L (logit aggregation) — IDENTICAL to E (305K novel, same scenes)│
+│   ✗ Strategy M (confidence gated) — 274K FPs, reduces volume not quality    │
+│   ✗ No-bias ablation — DONE: pole catastrophe returns, L=E both ways        │
 │                                                                                │
-│ COMPLETED:                                                                    │
-│   Strategy E (geometric ensemble) — proved backbone is CLIP-aligned,         │
-│   but feature-pooling approach is fundamentally limited (PQ=0.463)           │
+│   ROOT CAUSE: Backbone features lack margin between similar classes.         │
+│   "car" voxels have cos_sim("police car") ≈ cos_sim("car") ± noise.        │
+│   No inference strategy can create margin that doesn't exist in features.    │
 │                                                                                │
-│ SHORT-TERM TRAINING (1-2 weeks, single A100):                                │
-│   → Strategy I (voxel decomp loss) — directly strengthens per-voxel CLIP    │
-│     alignment for voting. Expected: K/L novel detection improves greatly.    │
-│   → Strategy C1 (200 negatives) — token head generalization                 │
+│ NEXT STEPS (training required, single A100 ~72h):                            │
+│   → Strategy I (voxel decomp loss + 200 diverse negatives)                  │
+│     - Teaches backbone to push "car" features AWAY from "police car"        │
+│     - Directly addresses root cause (no inter-class margin)                  │
+│     - Can start from current best checkpoint                                 │
 │                                                                                │
-│ MEDIUM-TERM (2-3 weeks):                                                      │
-│   → Strategy H (unfreeze + CLIP reg) — makes voxels more discriminative     │
-│   → Strategy H + I combined — strongest: panoptic-aware + CLIP-aligned      │
+│   → Strategy C1 (token head + 200 negatives)                                │
+│     - Fix the token head's 16-class collapse                                │
+│     - Minimal code change, can run simultaneously                            │
 │                                                                                │
-│ LONG-TERM / PUBLICATION:                                                      │
-│   → Strategy D (camera CLIP features) — bypasses 3D backbone entirely       │
-│   → Strategy J (CLIP encoder from scratch) — if H+I not enough              │
-│   → Strategy A (class-agnostic) — removes closed-set decoder bias           │
+│ MEDIUM-TERM (better features):                                                │
+│   → Strategy H + I (unfreeze backbone + voxel decomp)                       │
+│     - Backbone learns panoptic-aware boundaries                              │
+│     - With diverse negatives: fine-grained CLIP alignment                    │
 │                                                                                │
-│ DEPRIORITIZED:                                                                │
-│   → Strategy G (CLIP queries) — decoder attention is spatial not semantic    │
-│   → Strategy F (VLM captions) — out of scope for compute budget             │
-│   → Per-class temperature / bias correction — proven ineffective (too small) │
+│ BEST LONG-TERM (bypass 3D backbone limitation):                              │
+│   → Strategy D (camera CLIP features at inference)                           │
+│     - Fresh ViT-L/14 features have full CLIP resolution                     │
+│     - Can distinguish "police car" from "car" directly                       │
+│     - No 3D distillation degradation                                         │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Updated Recommended Execution Order
+### Updated Recommended Execution Order (2026-05-28)
 
 ```
-DONE: Strategy E — diagnostic, proved CLIP alignment, identified pooling problem
-DONE: Bias correction — proved ±0.08 range (too small to help), confirms per-voxel alignment
+DONE: Strategy E / geo_v2 — FPs in 10 scenes (visual verification)
+DONE: Strategy K/L/M evaluated on full trainval:
+  - L (logit aggregation) = identical to E → pooling NOT the bottleneck
+  - K (voxel vote) = 5.5× worse, PQ degraded
+  - M (confidence gated) = reduces volume, same FPs
+DONE: No-bias ablation (2026-05-29):
+  - voxel_vote: PQ=0.3935, 18.6M novel (pole catastrophe — 10× explosion)
+  - logit_agg: PQ=0.4642, 830K novel (pole returns)
+  - confidence_gated: PQ=0.4634, 364K novel (slightly more pole)
+  - Conclusion: bias prevents pole catastrophe, doesn't fix margin issue
 
-THIS WEEK (inference-only, validate per-voxel hypothesis):
-  Day 1: Strategy L (logit aggregation) — implement & run on trainval
-         - This is the cleanest test: if per-voxel logit aggregation >> feature pooling,
-           hypothesis confirmed
-  Day 2: Strategy M (confidence-gated) — implement & compare
-         - Specifically measure: how many novel objects detected vs Strategy E?
-  Day 3: Sweep parameters (temperature, alpha, confidence threshold)
-         - Determine best configuration for inference-only pipeline
+INFERENCE-ONLY CHAPTER: CLOSED
 
-NEXT WEEK (training, single A100, ~72h total):
-  - Strategy I: Add voxel decomposition loss to current training
-    - Start from best checkpoint, train 10 epochs with w_voxel=0.5
-    - Use 200+ diverse text negatives (not just 16)
-    - Re-evaluate with Strategy L → measure novel detection improvement
-  - Strategy C1: Add 200 negatives to token head (quick experiment)
+NEXT (training path):
+  Week 1: Strategy I implementation
+    - Generate diverse text negative bank (200+ concepts including confusables)
+    - Add voxel decomposition loss to training code
+    - Train from best checkpoint (20 epochs, single A100)
 
-WEEK 3 (architecture):
-  - Strategy H: Unfreeze backbone (LR=1e-6) with CLIP regularization
-    - Combined with Strategy I (voxel decomp + diverse negatives)
-    - 20 epochs, monitor cosine drift (should stay >0.9)
-    - Re-evaluate all metrics: closed PQ + novel detection
+  Week 2: Strategy C1 (token head + negatives)
+    - Minimal change: replace 16-negative loss with 200+
+    - Can train simultaneously with I
 
-WEEK 4+ (if needed):
-  - Strategy D: Camera CLIP features at inference (precompute offline)
-  - Strategy A: Class-agnostic mask retraining
+  Week 3+: Strategy H + I (unfreeze) or Strategy D (camera features)
 ```

@@ -52,7 +52,8 @@ from panoptic.scripts.visualize_lidar_camera_overlay import (
 from panoptic.scripts.evaluate_comprehensive import (
     load_config, load_backbone, extract_backbone_features,
     load_decoder_flexible, load_or_generate_22_prototypes,
-    panoptic_inference_geometric_ensemble, panoptic_inference_backbone_pool_v2,
+    generate_multi_prompt_prototypes, compute_prototype_bias,
+    panoptic_inference_geometric_ensemble_v2,
     panoptic_inference_linear, DEFAULT_NOVEL_CLASS_NAMES, THING_CLASSES_16,
 )
 
@@ -80,9 +81,9 @@ def parse_args():
     p.add_argument("--novel-classes", default=None)
     p.add_argument("--alpha", type=float, default=0.3, help="Geometric ensemble alpha")
     p.add_argument("--temperature", type=float, default=0.1)
-    p.add_argument("--mode", default="geometric_ensemble",
-                   choices=["geometric_ensemble", "backbone_pool_v2"],
-                   help="Which inference mode to visualize")
+    p.add_argument("--mode", default="geo_ensemble_v2",
+                   choices=["geo_ensemble_v2"],
+                   help="Inference mode (geo_ensemble_v2 with multi-prompt + bias correction)")
     p.add_argument("--num_samples", type=int, default=20, help="Number of samples to process")
     p.add_argument("--start_idx", type=int, default=0, help="Starting sample index")
     p.add_argument("--only_with_detections", action="store_true",
@@ -98,20 +99,14 @@ def parse_args():
     return p.parse_args()
 
 
-def run_inference(mode, pred_logits, pred_masks, backbone_feats, text_protos,
-                  num_known, overlap_thr, alpha, temperature, min_mask_pts):
-    """Run one of the open-vocab inference modes."""
-    if mode == "geometric_ensemble":
-        return panoptic_inference_geometric_ensemble(
-            pred_logits, pred_masks, backbone_feats, text_protos,
-            num_known=num_known, overlap_thr=overlap_thr,
-            alpha=alpha, temperature=temperature, min_mask_pts=min_mask_pts,
-        )
-    elif mode == "backbone_pool_v2":
-        return panoptic_inference_backbone_pool_v2(
-            backbone_feats, pred_masks, text_protos,
-            overlap_thr=overlap_thr, min_mask_pts=min_mask_pts,
-        )
+def run_inference(pred_logits, pred_masks, backbone_feats, text_protos_mp,
+                  proto_bias, num_known, overlap_thr, alpha, temperature, min_mask_pts):
+    """Run geo_ensemble_v2 inference (multi-prompt + bias correction)."""
+    return panoptic_inference_geometric_ensemble_v2(
+        pred_logits, pred_masks, backbone_feats, text_protos_mp, proto_bias,
+        num_known=num_known, overlap_thr=overlap_thr,
+        alpha=alpha, temperature=temperature, min_mask_pts=min_mask_pts,
+    )
 
 
 def draw_novel_overlay(cam_path, uv, sem_labels, novel_class_names, num_known,
@@ -226,21 +221,25 @@ def main():
     print(f"  Output:       {out_dir}")
     print()
 
-    # Load models
-    backbone = load_backbone(cfg["model"]["backbone_ckpt"], device)
-    decoder, has_token_head = load_decoder_flexible(cfg, args.checkpoint, device)
-
-    # Load prototypes
+    # Load prototypes (CLIP on GPU before backbone)
     token_cfg = cfg.get("token", {})
     proto_path = token_cfg.get(
         "prototype_path", "panoptic/clip_prototypes/text_prototypes_vitl14_336.pt"
     )
-    _, text_protos_all = load_or_generate_22_prototypes(
-        proto_path, None, device, novel_class_names
+    _, text_protos_mp = generate_multi_prompt_prototypes(
+        proto_path, device, novel_class_names
     )
-    if text_protos_all is None:
-        print("ERROR: Cannot load/generate prototypes.")
+    if text_protos_mp is None:
+        print("ERROR: Cannot generate multi-prompt prototypes.")
         return
+    print(f"Multi-prompt prototypes: {text_protos_mp.shape}", flush=True)
+
+    # Clear CLIP from GPU before loading panoptic models
+    torch.cuda.empty_cache()
+
+    # Load models
+    backbone = load_backbone(cfg["model"]["backbone_ckpt"], device)
+    decoder, has_token_head = load_decoder_flexible(cfg, args.checkpoint, device)
 
     # Load dataset and nuScenes DB
     from nuscenes.nuscenes import NuScenes as NuSc
@@ -253,7 +252,15 @@ def main():
         point_range=np.array(dcfg["point_range"]),
         augment=False, aug_cfg=None, nusc=nusc,
     )
+    val_loader = torch.utils.data.DataLoader(
+        val_ds, batch_size=1, shuffle=False, num_workers=0,
+        collate_fn=lambda x: x[0],
+    )
     print(f"Val: {len(val_ds)} samples\n", flush=True)
+
+    # Compute prototype bias (calibration)
+    print("Computing prototype bias for visualization...", flush=True)
+    proto_bias = compute_prototype_bias(backbone, val_loader, text_protos_mp, device)
 
     # Save legend
     draw_legend(novel_class_names, str(out_dir / "legend.png"))
@@ -281,8 +288,8 @@ def main():
 
             # Run inference
             sem_pred, inst_pred = run_inference(
-                args.mode, pred_logits, pred_masks, backbone_feats_v,
-                text_protos_all, num_known, overlap_thr,
+                pred_logits, pred_masks, backbone_feats_v,
+                text_protos_mp, proto_bias, num_known, overlap_thr,
                 args.alpha, args.temperature, min_points,
             )
 

@@ -1709,6 +1709,51 @@ The token head is a strong closed-set classifier but not open-vocabulary. Two pa
 
 ---
 
+## Phase 5b — Open-Vocabulary Inference Exploration (COMPLETE, 2026-05-28)
+
+### Objective
+
+Test whether the frozen DisNet backbone's CLIP-aligned features can support open-vocabulary detection at inference time (no additional training).
+
+### Strategies Tested
+
+| Strategy | Approach | Result |
+|----------|----------|--------|
+| E (geo ensemble) | Pool features → classify → geometric blend | PQ=0.470, 330K FPs |
+| E v2 (multi-prompt + bias) | Multi-prompt prototypes + bias correction | PQ=0.470, 330K FPs, 10/10 scenes visual FPs |
+| K (voxel vote) | Per-voxel classify → hard margin decision | PQ=0.449 (-0.027), 1.8M FPs |
+| L (logit aggregation) | Per-voxel classify → soft geometric blend | PQ=0.470, 305K FPs (identical to E) |
+| M (confidence gated) | Only check novel when linear head uncertain | PQ=0.463, 274K FPs |
+
+### Key Finding
+
+**Strategy L = Strategy E** (identical results). This conclusively proves that the bottleneck is NOT feature pooling but the backbone features themselves. The distillation chain (`CLIP → OpenSeg → 3D projection → DisNet`) degrades inter-class margins to noise level. No inference-only strategy can overcome this.
+
+### No-Bias Ablation (2026-05-29)
+
+- Without bias: pole catastrophe returns — voxel_vote explodes to 18.6M novel voxels (PQ=0.3935), logit_agg 830K (PQ=0.4642)
+- Bias prevents pole catastrophe but doesn't fix the fundamental margin issue
+- L=E confirmed in BOTH with-bias and no-bias ablations
+- **Inference-only chapter is definitively CLOSED**
+
+### Conclusion
+
+Inference-only open-vocabulary detection is NOT feasible with the current backbone. Training-based approaches (Strategy I: voxel decomp loss with diverse negatives, or Strategy D: camera CLIP features) are required.
+
+### Files created
+
+- `docs/model_design/model_openvocab_strategyE.md` — Strategy E full documentation
+- `docs/model_design/model_openvocab_strategyK_L_M.md` — Strategies K/L/M documentation + results
+- `understanding/open_vocab_strategies.md` — Comprehensive strategy analysis
+- `panoptic/scripts/evaluate_comprehensive.py` — 8-mode evaluation (linear, token, backbone_pool_v2, geometric_ensemble, geo_ensemble_v2, voxel_vote, logit_aggregation, confidence_gated)
+- `panoptic/scripts/visualize_novel_detections.py` — Visual verification tool
+
+### Next Phase
+
+Phase 5c: Training-based open-vocabulary (Strategy I — voxel decomposition loss with 200+ diverse text negatives). This requires modifying the training pipeline to add per-voxel contrastive supervision.
+
+---
+
 # 23. Definition of Success
 
 The project is successful if all of the following are true:

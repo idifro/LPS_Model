@@ -1,0 +1,692 @@
+======================================================================
+  Comprehensive Panoptic Evaluation
+======================================================================
+  Config:     panoptic/configs/full_nuscenes_token_v2.yaml
+  Checkpoint: panoptic/checkpoints_token_full_v2/best.pth
+  Version:    v1.0-trainval
+  Modes:      ['linear', 'token', 'backbone_pool_v2', 'geometric_ensemble', 'geo_ensemble_v2', 'voxel_vote', 'logit_aggregation', 'confidence_gated']
+  Output:     panoptic/eval_results/comprehensive/best_trainval_20260528_155406
+======================================================================
+
+Loading NuScenes database (version=v1.0-trainval, dataroot=/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes)...
+  NuScenes loaded: 850 scenes
+Creating NuScenesPanoptic dataset (split=val)...
+[NuScenesPanoptic] val: 6019 samples from v1.0-trainval
+  Dataset created: 6019 samples
+Creating DataLoader (num_workers=0)...
+[NuScenesPanoptic] val: 6019 samples from v1.0-trainval
+
+Generating 5 novel class prototypes with CLIP: ['police car', 'ambulance', 'trash cans', 'pole', 'bench']
+Loaded cached 21-class prototypes from panoptic/clip_prototypes/text_prototypes_vitl14_336_21class.pt
+Generating multi-prompt ensembled prototypes for ['police car', 'ambulance', 'trash cans', 'pole', 'bench']
+Loaded cached multi-prompt prototypes from panoptic/clip_prototypes/text_prototypes_vitl14_336_multiprompt_21class.pt (21 classes)
+16-class prototypes: torch.Size([16, 768])
+22-class prototypes: torch.Size([21, 768])
+Multi-prompt prototypes: torch.Size([21, 768])
+
+CLIP unloaded, GPU cache cleared.
+Loading backbone from: models/nuscenes_openseg.pth.tar
+  Backbone loaded.
+Loading decoder from: panoptic/checkpoints_token_full_v2/best.pth
+  Decoder loaded. Token head detected: True
+
+Computing prototype bias (calibration on 50 samples)...
+Computing prototype bias from 1000 calibration samples...
+    [25/1000]
+    [50/1000]
+    [75/1000]
+    [100/1000]
+    [125/1000]
+    [150/1000]
+    [175/1000]
+    [200/1000]
+    [225/1000]
+    [250/1000]
+    [275/1000]
+    [300/1000]
+    [325/1000]
+    [350/1000]
+    [375/1000]
+    [400/1000]
+    [425/1000]
+    [450/1000]
+    [475/1000]
+    [500/1000]
+    [525/1000]
+    [550/1000]
+    [575/1000]
+    [600/1000]
+    [625/1000]
+    [650/1000]
+    [675/1000]
+    [700/1000]
+    [725/1000]
+    [750/1000]
+    [775/1000]
+    [800/1000]
+    [825/1000]
+    [850/1000]
+    [875/1000]
+    [900/1000]
+    [925/1000]
+    [950/1000]
+    [975/1000]
+    [1000/1000]
+  Prototype bias range: [-0.0774, 0.0782]
+    barrier                  : 0.0457
+    bicycle                  : -0.0774
+    bus                      : -0.0389
+    car                      : -0.0091
+    construction_vehicle     : -0.0104
+    motorcycle               : -0.0591
+    pedestrian               : 0.0424
+    traffic_cone             : -0.0159
+    trailer                  : -0.0266
+    truck                    : -0.0260
+    driveable_surface        : 0.0636
+    other_flat               : -0.0123
+    sidewalk                 : 0.0639
+    terrain                  : -0.0094
+    manmade                  : 0.0262
+    vegetation               : -0.0205
+    novel_0                  : -0.0307
+    novel_1                  : -0.0372
+    novel_2                  : 0.0146
+    novel_3                  : 0.0782
+    novel_4                  : -0.0462
+  Proto bias (calibrated on 1000 samples): tensor([ 0.0457, -0.0774, -0.0389, -0.0091, -0.0104, -0.0591,  0.0424, -0.0159,
+        -0.0266, -0.0260,  0.0636, -0.0123,  0.0639, -0.0094,  0.0262, -0.0205,
+        -0.0307, -0.0372,  0.0146,  0.0782, -0.0462], device='cuda:0')
+Evaluating 6019 samples across modes: ['linear', 'token', 'backbone_pool_v2', 'geometric_ensemble', 'geo_ensemble_v2', 'voxel_vote', 'logit_aggregation', 'confidence_gated']
+
+  [50/6019]
+  [100/6019]
+  [150/6019]
+  [200/6019]
+  [250/6019]
+  [300/6019]
+  [350/6019]
+  [400/6019]
+  [450/6019]
+  [500/6019]
+  [550/6019]
+  [600/6019]
+  [650/6019]
+  [700/6019]
+  [750/6019]
+  [800/6019]
+  [850/6019]
+  [900/6019]
+  [950/6019]
+  [1000/6019]
+  [1050/6019]
+  [1100/6019]
+  [1150/6019]
+  [1200/6019]
+  [1250/6019]
+  [1300/6019]
+  [1350/6019]
+  [1400/6019]
+  [1450/6019]
+  [1500/6019]
+  [1550/6019]
+  [1600/6019]
+  [1650/6019]
+  [1700/6019]
+  [1750/6019]
+  [1800/6019]
+  [1850/6019]
+  [1900/6019]
+  [1950/6019]
+  [2000/6019]
+  [2050/6019]
+  [2100/6019]
+  [2150/6019]
+  [2200/6019]
+  [2250/6019]
+  [2300/6019]
+  [2350/6019]
+  [2400/6019]
+  [2450/6019]
+  [2500/6019]
+  [2550/6019]
+  [2600/6019]
+  [2650/6019]
+  [2700/6019]
+  [2750/6019]
+  [2800/6019]
+  [2850/6019]
+  [2900/6019]
+  [2950/6019]
+  [3000/6019]
+  [3050/6019]
+  [3100/6019]
+  [3150/6019]
+  [3200/6019]
+  [3250/6019]
+  [3300/6019]
+  [3350/6019]
+  [3400/6019]
+  [3450/6019]
+  [3500/6019]
+  [3550/6019]
+  [3600/6019]
+  [3650/6019]
+  [3700/6019]
+  [3750/6019]
+  [3800/6019]
+  [3850/6019]
+  [3900/6019]
+  [3950/6019]
+  [4000/6019]
+  [4050/6019]
+  [4100/6019]
+  [4150/6019]
+  [4200/6019]
+  [4250/6019]
+  [4300/6019]
+  [4350/6019]
+  [4400/6019]
+  [4450/6019]
+  [4500/6019]
+  [4550/6019]
+  [4600/6019]
+  [4650/6019]
+  [4700/6019]
+  [4750/6019]
+  [4800/6019]
+  [4850/6019]
+  [4900/6019]
+  [4950/6019]
+  [5000/6019]
+  [5050/6019]
+  [5100/6019]
+  [5150/6019]
+  [5200/6019]
+  [5250/6019]
+  [5300/6019]
+  [5350/6019]
+  [5400/6019]
+  [5450/6019]
+  [5500/6019]
+  [5550/6019]
+  [5600/6019]
+  [5650/6019]
+  [5700/6019]
+  [5750/6019]
+  [5800/6019]
+  [5850/6019]
+  [5900/6019]
+  [5950/6019]
+  [6000/6019]
+
+======================================================================
+  RESULTS
+======================================================================
+
+  Mode: linear
+  PQ=0.4761  SQ=0.7930  RQ=0.5828  mIoU=0.4323
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2348   0.7052   0.3329   0.0610
+  bicycle                     0.3068   0.7992   0.3838   0.0335
+  bus                         0.4627   0.8926   0.5184   0.6747
+  car                         0.8480   0.9058   0.9362   0.7734
+  construction_vehicle        0.3095   0.8649   0.3579   0.2296
+  motorcycle                  0.6511   0.9144   0.7120   0.4458
+  pedestrian                  0.7389   0.8424   0.8771   0.3871
+  traffic_cone                0.5650   0.7983   0.7077   0.1837
+  trailer                     0.2695   0.8038   0.3353   0.2649
+  truck                       0.4860   0.8693   0.5590   0.5856
+  driveable_surface           0.8567   0.8570   0.9997   0.8621
+  other_flat                  0.0682   0.6232   0.1094   0.1328
+  sidewalk                    0.2094   0.6398   0.3273   0.3071
+  terrain                     0.2527   0.6414   0.3940   0.4669
+  manmade                     0.6746   0.7688   0.8775   0.7653
+  vegetation                  0.6838   0.7621   0.8973   0.7429
+
+  Mode: token
+  PQ=0.4717  SQ=0.7969  RQ=0.5775  mIoU=0.4206
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2662   0.7046   0.3778   0.0642
+  bicycle                     0.2385   0.8149   0.2927   0.0316
+  bus                         0.4643   0.8868   0.5236   0.6491
+  car                         0.8478   0.9078   0.9339   0.7470
+  construction_vehicle        0.3456   0.8757   0.3946   0.2447
+  motorcycle                  0.5673   0.9120   0.6220   0.3424
+  pedestrian                  0.7191   0.8444   0.8516   0.3140
+  traffic_cone                0.5591   0.8076   0.6922   0.1689
+  trailer                     0.3096   0.8013   0.3863   0.2913
+  truck                       0.4742   0.8703   0.5449   0.5517
+  driveable_surface           0.8536   0.8543   0.9993   0.8594
+  other_flat                  0.1395   0.6618   0.2108   0.2295
+  sidewalk                    0.2089   0.6279   0.3328   0.3863
+  terrain                     0.2011   0.6508   0.3091   0.3727
+  manmade                     0.6632   0.7722   0.8588   0.7260
+  vegetation                  0.6898   0.7578   0.9102   0.7506
+
+  Mode: backbone_pool_v2_known
+  PQ=0.2207  SQ=0.6702  RQ=0.2597  mIoU=0.1722
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.1458   0.6918   0.2108   0.0203
+  bicycle                     0.0000   0.0000   0.0000   0.0000
+  bus                         0.3428   0.8891   0.3855   0.4841
+  car                         0.7582   0.9131   0.8303   0.6267
+  construction_vehicle        0.1151   0.8538   0.1349   0.0820
+  motorcycle                  0.4590   0.9585   0.4789   0.3686
+  pedestrian                  0.4852   0.8392   0.5781   0.0098
+  traffic_cone                0.3753   0.7641   0.4912   0.1043
+  trailer                     0.0033   0.9273   0.0036   0.0038
+  truck                       0.3693   0.8885   0.4157   0.4316
+  driveable_surface           0.2322   0.7976   0.2912   0.1968
+  other_flat                  0.0000   0.0000   0.0000   0.0000
+  sidewalk                    0.0626   0.6385   0.0980   0.1640
+  terrain                     0.0000   0.0000   0.0000   0.0000
+  manmade                     0.0024   0.7948   0.0030   0.0029
+  vegetation                  0.1796   0.7670   0.2342   0.2601
+
+  Mode: geo_ensemble_a0.3
+  PQ=0.4589  SQ=0.7986  RQ=0.5588  mIoU=0.4235
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2473   0.7091   0.3487   0.0616
+  bicycle                     0.2129   0.8302   0.2564   0.0230
+  bus                         0.4578   0.8954   0.5113   0.6708
+  car                         0.8389   0.9025   0.9295   0.7477
+  construction_vehicle        0.3180   0.8663   0.3671   0.2388
+  motorcycle                  0.6582   0.9415   0.6991   0.5047
+  pedestrian                  0.7121   0.8398   0.8479   0.3308
+  traffic_cone                0.4809   0.7889   0.6095   0.1745
+  trailer                     0.2558   0.8115   0.3152   0.2665
+  truck                       0.4824   0.8707   0.5541   0.5759
+  driveable_surface           0.8541   0.8544   0.9997   0.8598
+  other_flat                  0.0524   0.6523   0.0803   0.0875
+  sidewalk                    0.2153   0.6240   0.3450   0.4045
+  terrain                     0.2014   0.6617   0.3044   0.3257
+  manmade                     0.6764   0.7668   0.8821   0.7636
+  vegetation                  0.6784   0.7617   0.8906   0.7399
+
+  Mode: geo_ensemble_a0.5
+  PQ=0.4642  SQ=0.7960  RQ=0.5664  mIoU=0.4219
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2477   0.7095   0.3491   0.0634
+  bicycle                     0.2370   0.7898   0.3000   0.0326
+  bus                         0.4544   0.8929   0.5089   0.6665
+  car                         0.8392   0.9026   0.9298   0.7416
+  construction_vehicle        0.3217   0.8692   0.3701   0.2427
+  motorcycle                  0.6653   0.9268   0.7179   0.4845
+  pedestrian                  0.7105   0.8400   0.8459   0.3187
+  traffic_cone                0.5081   0.8074   0.6293   0.1682
+  trailer                     0.2710   0.8124   0.3335   0.2654
+  truck                       0.4876   0.8689   0.5611   0.5748
+  driveable_surface           0.8523   0.8526   0.9997   0.8581
+  other_flat                  0.0542   0.6542   0.0829   0.0879
+  sidewalk                    0.2177   0.6224   0.3498   0.4098
+  terrain                     0.2071   0.6592   0.3141   0.3367
+  manmade                     0.6764   0.7676   0.8812   0.7624
+  vegetation                  0.6768   0.7608   0.8895   0.7377
+
+  Mode: geo_ensemble_a0.7
+  PQ=0.4629  SQ=0.7954  RQ=0.5653  mIoU=0.4213
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2473   0.7081   0.3492   0.0637
+  bicycle                     0.2181   0.7953   0.2743   0.0293
+  bus                         0.4601   0.8908   0.5165   0.6742
+  car                         0.8387   0.9027   0.9291   0.7420
+  construction_vehicle        0.3120   0.8704   0.3585   0.2328
+  motorcycle                  0.6602   0.9223   0.7159   0.4600
+  pedestrian                  0.7111   0.8395   0.8470   0.3211
+  traffic_cone                0.5059   0.8074   0.6265   0.1628
+  trailer                     0.2770   0.8140   0.3402   0.2714
+  truck                       0.4876   0.8681   0.5617   0.5767
+  driveable_surface           0.8521   0.8524   0.9997   0.8581
+  other_flat                  0.0561   0.6463   0.0868   0.0919
+  sidewalk                    0.2187   0.6229   0.3511   0.4091
+  terrain                     0.2106   0.6578   0.3202   0.3537
+  manmade                     0.6757   0.7675   0.8804   0.7618
+  vegetation                  0.6744   0.7601   0.8872   0.7318
+
+  Mode: geo_v2_a0.3
+  PQ=0.4691  SQ=0.7951  RQ=0.5740  mIoU=0.4246
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2351   0.7029   0.3344   0.0704
+  bicycle                     0.2595   0.8084   0.3210   0.0285
+  bus                         0.4348   0.8843   0.4917   0.5951
+  car                         0.8397   0.9037   0.9291   0.7093
+  construction_vehicle        0.3247   0.8689   0.3736   0.2470
+  motorcycle                  0.6810   0.9261   0.7353   0.4927
+  pedestrian                  0.7190   0.8397   0.8562   0.3486
+  traffic_cone                0.5080   0.8042   0.6317   0.1740
+  trailer                     0.2602   0.8122   0.3203   0.2723
+  truck                       0.4906   0.8688   0.5647   0.5759
+  driveable_surface           0.8510   0.8515   0.9995   0.8569
+  other_flat                  0.0523   0.6471   0.0808   0.0846
+  sidewalk                    0.2173   0.6341   0.3426   0.3277
+  terrain                     0.2660   0.6382   0.4169   0.4977
+  manmade                     0.6776   0.7716   0.8782   0.7576
+  vegetation                  0.6892   0.7597   0.9071   0.7549
+
+  Mode: geo_v2_a0.5
+  PQ=0.4697  SQ=0.7928  RQ=0.5756  mIoU=0.4300
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2401   0.7045   0.3408   0.0730
+  bicycle                     0.2384   0.7886   0.3023   0.0276
+  bus                         0.4624   0.8886   0.5204   0.6661
+  car                         0.8425   0.9044   0.9315   0.7396
+  construction_vehicle        0.3181   0.8646   0.3679   0.2404
+  motorcycle                  0.6721   0.9241   0.7273   0.4783
+  pedestrian                  0.7145   0.8396   0.8510   0.3318
+  traffic_cone                0.5133   0.8049   0.6378   0.1748
+  trailer                     0.2611   0.8102   0.3223   0.2752
+  truck                       0.4877   0.8691   0.5612   0.5753
+  driveable_surface           0.8504   0.8510   0.9993   0.8561
+  other_flat                  0.0630   0.6357   0.0991   0.0970
+  sidewalk                    0.2163   0.6308   0.3429   0.3331
+  terrain                     0.2667   0.6386   0.4176   0.4988
+  manmade                     0.6775   0.7713   0.8784   0.7576
+  vegetation                  0.6905   0.7593   0.9095   0.7550
+
+  Mode: geo_v2_a0.7
+  PQ=0.4684  SQ=0.7919  RQ=0.5749  mIoU=0.4308
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2421   0.7054   0.3432   0.0729
+  bicycle                     0.2155   0.7801   0.2762   0.0278
+  bus                         0.4633   0.8880   0.5217   0.6688
+  car                         0.8426   0.9045   0.9316   0.7466
+  construction_vehicle        0.3170   0.8610   0.3682   0.2398
+  motorcycle                  0.6691   0.9196   0.7276   0.4691
+  pedestrian                  0.7127   0.8398   0.8486   0.3262
+  traffic_cone                0.5153   0.8059   0.6394   0.1677
+  trailer                     0.2559   0.8073   0.3169   0.2750
+  truck                       0.4850   0.8673   0.5592   0.5743
+  driveable_surface           0.8504   0.8509   0.9993   0.8561
+  other_flat                  0.0798   0.6415   0.1244   0.1268
+  sidewalk                    0.2143   0.6309   0.3397   0.3318
+  terrain                     0.2641   0.6378   0.4141   0.4973
+  manmade                     0.6776   0.7715   0.8783   0.7580
+  vegetation                  0.6906   0.7594   0.9094   0.7549
+
+  Mode: voxel_vote
+  PQ=0.4490  SQ=0.7932  RQ=0.5506  mIoU=0.3991
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2326   0.7047   0.3301   0.0557
+  bicycle                     0.2363   0.8102   0.2917   0.0250
+  bus                         0.3501   0.8967   0.3905   0.5177
+  car                         0.7772   0.8953   0.8681   0.5678
+  construction_vehicle        0.2951   0.8664   0.3406   0.2242
+  motorcycle                  0.6568   0.9115   0.7206   0.4505
+  pedestrian                  0.7152   0.8414   0.8500   0.3257
+  traffic_cone                0.5117   0.8093   0.6323   0.1543
+  trailer                     0.2490   0.8020   0.3105   0.2570
+  truck                       0.4409   0.8653   0.5095   0.5580
+  driveable_surface           0.8567   0.8570   0.9997   0.8621
+  other_flat                  0.0629   0.6220   0.1012   0.1307
+  sidewalk                    0.1935   0.6364   0.3040   0.2868
+  terrain                     0.2490   0.6405   0.3888   0.4631
+  manmade                     0.6737   0.7698   0.8752   0.7643
+  vegetation                  0.6837   0.7621   0.8971   0.7429
+
+  Mode: logit_agg_a0.3
+  PQ=0.4697  SQ=0.7949  RQ=0.5748  mIoU=0.4257
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2355   0.7030   0.3350   0.0711
+  bicycle                     0.2520   0.8092   0.3114   0.0283
+  bus                         0.4410   0.8854   0.4981   0.6032
+  car                         0.8401   0.9038   0.9295   0.7126
+  construction_vehicle        0.3268   0.8692   0.3760   0.2475
+  motorcycle                  0.6793   0.9231   0.7359   0.4925
+  pedestrian                  0.7189   0.8397   0.8561   0.3484
+  traffic_cone                0.5094   0.8047   0.6330   0.1740
+  trailer                     0.2650   0.8152   0.3250   0.2760
+  truck                       0.4909   0.8691   0.5649   0.5754
+  driveable_surface           0.8511   0.8515   0.9995   0.8569
+  other_flat                  0.0544   0.6418   0.0847   0.0867
+  sidewalk                    0.2175   0.6346   0.3427   0.3221
+  terrain                     0.2656   0.6367   0.4171   0.5045
+  manmade                     0.6778   0.7716   0.8785   0.7577
+  vegetation                  0.6904   0.7595   0.9090   0.7551
+
+  Mode: logit_agg_a0.5
+  PQ=0.4702  SQ=0.7930  RQ=0.5761  mIoU=0.4308
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2414   0.7049   0.3425   0.0736
+  bicycle                     0.2343   0.7886   0.2971   0.0286
+  bus                         0.4644   0.8883   0.5228   0.6675
+  car                         0.8431   0.9047   0.9319   0.7416
+  construction_vehicle        0.3186   0.8646   0.3685   0.2406
+  motorcycle                  0.6733   0.9241   0.7286   0.4789
+  pedestrian                  0.7135   0.8400   0.8494   0.3313
+  traffic_cone                0.5157   0.8054   0.6402   0.1754
+  trailer                     0.2602   0.8112   0.3207   0.2749
+  truck                       0.4890   0.8692   0.5626   0.5760
+  driveable_surface           0.8505   0.8511   0.9993   0.8561
+  other_flat                  0.0696   0.6366   0.1093   0.1051
+  sidewalk                    0.2163   0.6312   0.3426   0.3272
+  terrain                     0.2641   0.6376   0.4142   0.5037
+  manmade                     0.6776   0.7714   0.8784   0.7576
+  vegetation                  0.6909   0.7592   0.9100   0.7550
+
+  Mode: logit_agg_a0.7
+  PQ=0.4695  SQ=0.7922  RQ=0.5764  mIoU=0.4321
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2424   0.7050   0.3438   0.0736
+  bicycle                     0.2216   0.7801   0.2841   0.0282
+  bus                         0.4647   0.8881   0.5233   0.6720
+  car                         0.8430   0.9046   0.9319   0.7472
+  construction_vehicle        0.3181   0.8613   0.3693   0.2405
+  motorcycle                  0.6654   0.9192   0.7239   0.4630
+  pedestrian                  0.7131   0.8399   0.8491   0.3267
+  traffic_cone                0.5157   0.8078   0.6384   0.1685
+  trailer                     0.2548   0.8065   0.3159   0.2745
+  truck                       0.4860   0.8675   0.5602   0.5750
+  driveable_surface           0.8505   0.8511   0.9993   0.8562
+  other_flat                  0.0902   0.6456   0.1397   0.1445
+  sidewalk                    0.2150   0.6305   0.3410   0.3283
+  terrain                     0.2634   0.6370   0.4135   0.5019
+  manmade                     0.6775   0.7715   0.8782   0.7580
+  vegetation                  0.6910   0.7592   0.9101   0.7550
+
+  Mode: confidence_gated
+  PQ=0.4633  SQ=0.7945  RQ=0.5664  mIoU=0.4278
+  Class                           PQ       SQ       RQ      IoU
+  ---------------------------------------------------------
+  barrier                     0.2280   0.7024   0.3246   0.0624
+  bicycle                     0.2800   0.8209   0.3411   0.0309
+  bus                         0.4535   0.8921   0.5083   0.6755
+  car                         0.8374   0.9038   0.9265   0.7554
+  construction_vehicle        0.2820   0.8670   0.3253   0.2178
+  motorcycle                  0.6668   0.9298   0.7172   0.4774
+  pedestrian                  0.7123   0.8363   0.8517   0.3502
+  traffic_cone                0.5042   0.7961   0.6334   0.1632
+  trailer                     0.2526   0.8064   0.3132   0.2624
+  truck                       0.4683   0.8699   0.5384   0.5797
+  driveable_surface           0.8567   0.8570   0.9997   0.8621
+  other_flat                  0.0620   0.6204   0.0999   0.1278
+  sidewalk                    0.2090   0.6398   0.3267   0.3068
+  terrain                     0.2514   0.6414   0.3920   0.4665
+  manmade                     0.6745   0.7688   0.8773   0.7653
+  vegetation                  0.6738   0.7592   0.8876   0.7419
+
+
+======================================================================
+  SUMMARY
+======================================================================
+  Mode                                 PQ       SQ       RQ     mIoU    Novel Vox
+  --------------------------------------------------------------------------
+  linear                           0.4761   0.7930   0.5828   0.4323          N/A
+  token                            0.4717   0.7969   0.5775   0.4206          N/A
+  backbone_pool_v2_known           0.2207   0.6702   0.2597   0.1722   23,909,330
+  geo_ensemble_a0.3                0.4589   0.7986   0.5588   0.4235      173,117
+  geo_ensemble_a0.5                0.4642   0.7960   0.5664   0.4219      173,117
+  geo_ensemble_a0.7                0.4629   0.7954   0.5653   0.4213      173,117
+  geo_v2_a0.3                      0.4691   0.7951   0.5740   0.4246      330,658
+  geo_v2_a0.5                      0.4697   0.7928   0.5756   0.4300      330,658
+  geo_v2_a0.7                      0.4684   0.7919   0.5749   0.4308      330,658
+  voxel_vote                       0.4490   0.7932   0.5506   0.3991    1,815,332
+  logit_agg_a0.3                   0.4697   0.7949   0.5748   0.4257      305,525
+  logit_agg_a0.5                   0.4702   0.7930   0.5761   0.4308      305,525
+  logit_agg_a0.7                   0.4695   0.7922   0.5764   0.4321      305,525
+  confidence_gated                 0.4633   0.7945   0.5664   0.4278      274,038
+  Best geo ensemble: geo_ensemble_a0.5 (PQ=0.4642)
+  Best geo v2 (multi-prompt): geo_v2_a0.5 (PQ=0.4697)
+  Best logit aggregation: logit_agg_a0.5 (PQ=0.4702)
+
+======================================================================
+  NOVEL CLASS DETECTIONS
+======================================================================
+  Novel Class            backbone_poo   geometric_en   geo_ensemble     voxel_vote   logit_aggreg   confidence_g
+  ----------------------------------------------------------------------
+  police car                        0            726         10,894        787,865         10,181        102,728
+  ambulance                         0              0        296,281        629,947        274,034         36,524
+  trash cans                   41,805          7,249         20,703         31,001         19,347         22,828
+  pole                     23,867,525        165,142            843         60,948            603         88,946
+  bench                             0              0          1,937        305,571          1,360         23,012
+
+Saved results.json to panoptic/eval_results/comprehensive/best_trainval_20260528_155406
+Saved novel_detections.json to panoptic/eval_results/comprehensive/best_trainval_20260528_155406
+Saved per_scene_novel_detections.json
+
+  Top-20 scenes for [backbone_pool_v2] (6016 scenes with novel voxels):
+     1. 9d89067ae94a4fc29c464f0d8dc2dab6  total=  14,351  {'pole': 14351}
+     2. cc70e72a73be45ffbe47258b81d70436  total=  14,085  {'pole': 14085}
+     3. de7dec572e6c46f8ab11478864a116ce  total=  12,461  {'pole': 12461}
+     4. 9ed40a1cea7943128d8d21d64f951023  total=  11,992  {'pole': 11992}
+     5. da45d51dc5224f70b7c3f65e06da5249  total=  11,717  {'pole': 11717}
+     6. d9e3f6344b764bf383485c83fe272f92  total=  11,606  {'pole': 11606}
+     7. 6d9def1e245e4dde83ccbb7a97e4744c  total=  11,601  {'pole': 11601}
+     8. 40691e80360f47a7b212d3888982ea17  total=  11,536  {'pole': 11536}
+     9. 2402ba90f72345d2abbc04224afd0330  total=  11,302  {'pole': 11302}
+    10. c5787be14c74422cb2f04a3afe478e67  total=  11,220  {'pole': 11220}
+    11. 6f5980b6721c4486b815a3cc6037b48a  total=  11,076  {'pole': 11076}
+    12. 5c60bb1dd0b4423b9e619fc21d523b16  total=  10,783  {'pole': 10783}
+    13. f139b4ea812449d9b19f8b3227e5a834  total=  10,513  {'pole': 10513}
+    14. ac6670acd3054a0cb075fa248f036cbc  total=  10,479  {'pole': 10479}
+    15. 43d1d34148c642878010663bbad1547a  total=  10,258  {'pole': 10258}
+    16. b4accdcad42b4ff3a8b112c8c525ade7  total=  10,199  {'pole': 10199}
+    17. 99a4c956cb4f44cc975680994c6bb40a  total=  10,181  {'trash cans': 474, 'pole': 9707}
+    18. 4f7763e7f02e49d59f70e8fab4691d91  total=  10,122  {'pole': 10122}
+    19. 87a927d7e61345d3a098eb66908bddcb  total=  10,096  {'pole': 10096}
+    20. b007fc18b89f4f42bf5798e093b43729  total=  10,092  {'pole': 10092}
+
+  Top-20 scenes for [geometric_ensemble] (5333 scenes with novel voxels):
+     1. 3414bbcff961455ea6549ba1a2bb3b81  total=   1,485  {'pole': 1485}
+     2. a26a43f97a8649548eea5dbaafe5de72  total=     688  {'pole': 688}
+     3. 3494e1a995f6404da4106f156c99ea49  total=     685  {'pole': 685}
+     4. 8687ba92abd3406aa797115b874ebeba  total=     677  {'pole': 677}
+     5. 119fb420f7574100b8407f21475cfff3  total=     506  {'pole': 506}
+     6. fb1f8ae5a6b5424795b51aae5075599b  total=     504  {'pole': 504}
+     7. 0e35bd839418489c82308484df3ea1ec  total=     477  {'pole': 477}
+     8. f540699e07cf47d8bddeb1f0227a7417  total=     470  {'trash cans': 57, 'pole': 413}
+     9. 9bae266bbc304e9592b6fc16801476ef  total=     452  {'pole': 452}
+    10. d0a9cf1d37cd414584f676826a1f400a  total=     421  {'pole': 421}
+    11. 227d9020c63940cf8f8b63916bf39d5b  total=     388  {'pole': 388}
+    12. 1985be517c0b423294eab5eecba30004  total=     386  {'pole': 386}
+    13. 59e6f43c31be472393ee5c8dcc45f9cf  total=     379  {'pole': 379}
+    14. eec42a16e60d4161919ca507526be264  total=     371  {'pole': 371}
+    15. cf753561271b4c40bef93a35bb0cf13f  total=     365  {'pole': 365}
+    16. cffde5b9752240b2932cd04cbd1fccd6  total=     345  {'police car': 25, 'pole': 320}
+    17. 9f6607c867df43e5b35cfe04b5c7c1b3  total=     344  {'pole': 344}
+    18. edea4d60969d47d09921b65cdee2cb1e  total=     337  {'pole': 337}
+    19. fe7997b374d3489882f5f6717e8bc5a8  total=     333  {'pole': 333}
+    20. 3b3703bdb0584fb685f6a2d6ef6917f6  total=     333  {'pole': 333}
+
+  Top-20 scenes for [voxel_vote] (4566 scenes with novel voxels):
+     1. 30c324668c6c473983043edea96bb1c5  total=   7,449  {'pole': 18, 'bench': 7431}
+     2. 2e354da2e39c4fb59053be18e61d2f7c  total=   6,643  {'bench': 6643}
+     3. 578bcb3c86594353bbb4f35c925be4b6  total=   6,345  {'bench': 6345}
+     4. 0b62ca54c32747d1a5f24d80f7c5ef95  total=   6,156  {'ambulance': 56, 'bench': 6100}
+     5. b0f7564c8e3c4d97a9e9d632672c279c  total=   5,507  {'ambulance': 261, 'pole': 10, 'bench': 5236}
+     6. 26ff943010a54658b8a9471ff433c3b0  total=   5,165  {'ambulance': 5142, 'trash cans': 23}
+     7. 35eff3f6f5b84929a33c2bda269a266f  total=   4,645  {'pole': 7, 'bench': 4638}
+     8. 9c96d300ddd54cd587b70ac7a47b243a  total=   4,420  {'ambulance': 4409, 'pole': 11}
+     9. 3a531d4d6845432bb087cca72843c066  total=   4,289  {'police car': 18, 'ambulance': 1918, 'bench': 2353}
+    10. a63890479948474789881a575788d25c  total=   4,260  {'ambulance': 4218, 'pole': 42}
+    11. cce9a0212eb1444696e2decbc95a015e  total=   4,099  {'police car': 1050, 'ambulance': 3049}
+    12. 806011e8a7114eca971fd0f6b95bcd4b  total=   3,987  {'police car': 345, 'bench': 3642}
+    13. 39ac0d94ecaa4c32a779975bad9502df  total=   3,951  {'ambulance': 3874, 'trash cans': 60, 'pole': 17}
+    14. e0513430edd04b22af02eb1d912bfe83  total=   3,884  {'ambulance': 3734, 'trash cans': 86, 'pole': 64}
+    15. 0fbeb606190e48eba09c7ef5701cffda  total=   3,834  {'police car': 845, 'ambulance': 73, 'bench': 2916}
+    16. fb1f8ae5a6b5424795b51aae5075599b  total=   3,769  {'ambulance': 3550, 'trash cans': 214, 'pole': 5}
+    17. 2a73d80698c546739b873783b45d3534  total=   3,648  {'police car': 1142, 'ambulance': 2483, 'pole': 23}
+    18. 2f26712f9c484ced857e42dc425d1d20  total=   3,642  {'pole': 23, 'bench': 3619}
+    19. e14dc295bf8f4cca8bbea7fa0068b6ef  total=   3,640  {'police car': 456, 'ambulance': 39, 'pole': 10, 'bench': 3135}
+    20. 59e1ec0333a747d58efe81aeb250c113  total=   3,526  {'bench': 3526}
+
+  Top-20 scenes for [confidence_gated] (5491 scenes with novel voxels):
+     1. 87eb02bfe23642bb9004c086587749b8  total=   1,245  {'police car': 39, 'ambulance': 1195, 'pole': 11}
+     2. ecba6710968e4e118a943a12c56f57a6  total=   1,151  {'police car': 34, 'ambulance': 259, 'trash cans': 14, 'pole': 21, 'bench': 823}
+     3. fa7e79db3cc947e1a5708a2c3efc3aed  total=   1,111  {'police car': 1094, 'pole': 17}
+     4. c5e587ca7daf4f0db1f369a55a833f14  total=   1,087  {'police car': 5, 'ambulance': 1011, 'pole': 23, 'bench': 48}
+     5. 7d47b2309e5f4eddac3ca1b82f16bba6  total=   1,038  {'ambulance': 1038}
+     6. 7a96a1aca9344de19eb4f965664792ef  total=   1,016  {'police car': 1012, 'pole': 4}
+     7. 76bd17fda1da4e349558f5bd8bbf47f6  total=     954  {'pole': 20, 'bench': 934}
+     8. 0e8782aa721545caabc7073d32fb1fb1  total=     906  {'police car': 906}
+     9. cf753561271b4c40bef93a35bb0cf13f  total=     896  {'police car': 7, 'ambulance': 98, 'trash cans': 703, 'pole': 88}
+    10. 20d3e54ae277464daafd2a078b830170  total=     838  {'bench': 838}
+    11. d9523bc7d6014ae49bfc855e59898897  total=     812  {'police car': 749, 'ambulance': 54, 'pole': 9}
+    12. c5787be14c74422cb2f04a3afe478e67  total=     790  {'police car': 28, 'pole': 4, 'bench': 758}
+    13. befb06465a7f4b0793dcaa467854a6dc  total=     783  {'police car': 77, 'pole': 26, 'bench': 680}
+    14. 2a73d80698c546739b873783b45d3534  total=     771  {'police car': 41, 'ambulance': 714, 'pole': 16}
+    15. cbbd333271434197b1bd8302ae03100f  total=     770  {'police car': 21, 'pole': 18, 'bench': 731}
+    16. 0f512a2cf5e24a84bb7a13774295ece8  total=     750  {'ambulance': 744, 'pole': 6}
+    17. 8a51f719699b49f893a8ed0932201c22  total=     744  {'police car': 48, 'ambulance': 696}
+    18. 000868a72138448191b4092f75ed7776  total=     739  {'police car': 721, 'pole': 18}
+    19. 830ba619959e4802a955ac40c5ee9453  total=     725  {'police car': 3, 'ambulance': 685, 'pole': 37}
+    20. 3b8d799305e54bfd8da165f83a75a2d0  total=     689  {'police car': 601, 'trash cans': 33, 'pole': 55}
+
+  Top-20 scenes for [geo_ensemble_v2] (1037 scenes with novel voxels):
+     1. 26ff943010a54658b8a9471ff433c3b0  total=   5,155  {'ambulance': 5155}
+     2. 9c96d300ddd54cd587b70ac7a47b243a  total=   4,512  {'ambulance': 4512}
+     3. 39ac0d94ecaa4c32a779975bad9502df  total=   3,904  {'ambulance': 3904}
+     4. fb1f8ae5a6b5424795b51aae5075599b  total=   3,642  {'ambulance': 3642}
+     5. a08d81b25afa47119071f4cf9a2ed667  total=   3,191  {'ambulance': 3191}
+     6. e0b31c1fd62746a2b314f9584548ecb0  total=   3,190  {'ambulance': 3190}
+     7. 4cc584c2913742e690f757531deaca80  total=   3,162  {'ambulance': 3162}
+     8. 08ec4b7fcdb5494c8da174770c1d9245  total=   3,001  {'ambulance': 3001}
+     9. 6cb74a87748b4fab82ad1b0869b27e01  total=   2,837  {'ambulance': 2837}
+    10. c223c6a23bdb4aed96e70a0ebee9dfed  total=   2,809  {'ambulance': 2809}
+    11. 56b65b676c4a4afba934a7dabb979add  total=   2,665  {'ambulance': 2665}
+    12. 075628998b2844df98ad10ea7bf22c66  total=   2,538  {'police car': 34, 'ambulance': 2504}
+    13. 5448c4ae531944f3af9ac5d78154ed8d  total=   2,535  {'ambulance': 2535}
+    14. b52f55cafb384e71b16e48be1e1499be  total=   2,515  {'ambulance': 2515}
+    15. 7949609177914534a89a8c7985ae4db7  total=   2,502  {'ambulance': 2502}
+    16. 67ba4f47714b4edc85b1a4fff64f27f3  total=   2,459  {'ambulance': 2459}
+    17. 14d4567100c84c8686872077473f9877  total=   2,427  {'ambulance': 2427}
+    18. 72a064f99d384586a0e16bfedecd2fe9  total=   2,427  {'ambulance': 2427}
+    19. 60832ea2bb78449690e751f5ab3de000  total=   2,411  {'ambulance': 2411}
+    20. 01411f0342c645c39ce7ef082d4c27d0  total=   2,406  {'ambulance': 2406}
+
+  Top-20 scenes for [logit_aggregation] (980 scenes with novel voxels):
+     1. 26ff943010a54658b8a9471ff433c3b0  total=   5,146  {'ambulance': 5146}
+     2. 9c96d300ddd54cd587b70ac7a47b243a  total=   4,512  {'ambulance': 4512}
+     3. 39ac0d94ecaa4c32a779975bad9502df  total=   3,904  {'ambulance': 3904}
+     4. fb1f8ae5a6b5424795b51aae5075599b  total=   3,642  {'ambulance': 3642}
+     5. e0b31c1fd62746a2b314f9584548ecb0  total=   3,190  {'ambulance': 3190}
+     6. a08d81b25afa47119071f4cf9a2ed667  total=   3,169  {'ambulance': 3169}
+     7. 4cc584c2913742e690f757531deaca80  total=   3,162  {'ambulance': 3162}
+     8. 08ec4b7fcdb5494c8da174770c1d9245  total=   3,001  {'ambulance': 3001}
+     9. 6cb74a87748b4fab82ad1b0869b27e01  total=   2,837  {'ambulance': 2837}
+    10. c223c6a23bdb4aed96e70a0ebee9dfed  total=   2,809  {'ambulance': 2809}
+    11. 56b65b676c4a4afba934a7dabb979add  total=   2,665  {'ambulance': 2665}
+    12. 075628998b2844df98ad10ea7bf22c66  total=   2,538  {'police car': 34, 'ambulance': 2504}
+    13. 5448c4ae531944f3af9ac5d78154ed8d  total=   2,535  {'ambulance': 2535}
+    14. b52f55cafb384e71b16e48be1e1499be  total=   2,515  {'ambulance': 2515}
+    15. 7949609177914534a89a8c7985ae4db7  total=   2,502  {'ambulance': 2502}
+    16. 67ba4f47714b4edc85b1a4fff64f27f3  total=   2,459  {'ambulance': 2459}
+    17. 14d4567100c84c8686872077473f9877  total=   2,427  {'ambulance': 2427}
+    18. 72a064f99d384586a0e16bfedecd2fe9  total=   2,427  {'ambulance': 2427}
+    19. 60832ea2bb78449690e751f5ab3de000  total=   2,411  {'ambulance': 2411}
+    20. 01411f0342c645c39ce7ef082d4c27d0  total=   2,406  {'ambulance': 2406}
+
+Done. All outputs in: panoptic/eval_results/comprehensive/best_trainval_20260528_155406

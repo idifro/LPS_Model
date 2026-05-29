@@ -1,21 +1,26 @@
-"""Comprehensive panoptic evaluation: 8 modes in a single forward pass.
+"""Comprehensive panoptic evaluation: multiple modes in a single forward pass.
 
 Modes:
   A. Linear         – pred_logits softmax → 16 known classes
   B. Token-16       – pred_tokens cosine sim → 16 known classes
-  C. Ensemble       – alpha sweep blending A+B → 16 known classes
-  D. Token-OpenVocab – pred_tokens cosine sim → 22 classes (16 known + 6 novel)
-  E. Backbone-Pool  – mean-pool encoder feats per mask → 22 classes (legacy, buggy)
   F. Backbone-Pool-v2 – normalized soft-pool encoder feats → N classes (bug-fixed)
   G. Geometric-Ensemble – linear^alpha * clip_pool^(1-alpha) → N classes (Strategy E)
   H. Geo-Ensemble-v2 – G + multi-prompt prototypes + per-class temperature (improved)
+  K. Voxel-Vote     – per-voxel classify then aggregate votes per mask (Strategy K)
+  L. Logit-Aggregation – soft mask-weighted logit aggregation (Strategy L)
+  M. Confidence-Gated – novel detection only when linear head is uncertain (Strategy M)
 
 Usage:
-    python -u panoptic/scripts/evaluate_comprehensive.py \
-        --config panoptic/configs/full_nuscenes_token_v2.yaml \
-        --checkpoint panoptic/checkpoints_token_full_v2/best.pth \
-        --version v1.0-mini \
+    python -u panoptic/scripts/evaluate_comprehensive.py \\
+        --config panoptic/configs/full_nuscenes_token_v2.yaml \\
+        --checkpoint panoptic/checkpoints_token_full_v2/best.pth \\
         --novel-classes "police car,ambulance,trash cans,pole,bench"
+
+    # Run only K/L/M strategies:
+    python -u panoptic/scripts/evaluate_comprehensive.py \\
+        --config panoptic/configs/full_nuscenes_token_v2.yaml \\
+        --checkpoint panoptic/checkpoints_token_full_v2/best.pth \\
+        --modes voxel_vote,logit_aggregation,confidence_gated
 """
 import argparse
 import sys
@@ -45,7 +50,8 @@ DEFAULT_NOVEL_CLASS_NAMES = ["police car", "ambulance", "trash cans", "pole", "b
 LEGACY_NOVEL_CLASS_NAMES = ["pole", "bench", "trash can", "fire hydrant", "tree trunk", "curb"]
 THING_CLASSES_16 = set(range(10))  # 0-9 are things in nuScenes-16
 
-ALL_MODES = ["linear", "token", "backbone_pool_v2", "geometric_ensemble", "geo_ensemble_v2"]
+ALL_MODES = ["linear", "token", "backbone_pool_v2", "geometric_ensemble", "geo_ensemble_v2",
+             "voxel_vote", "logit_aggregation", "confidence_gated"]
 
 # ── Multi-prompt templates for novel classes ──────────────────────────────
 # Each novel class has 5-8 descriptions emphasizing distinguishing features.
@@ -262,7 +268,7 @@ def extract_backbone_features(backbone, batch, device):
     with torch.no_grad():
         output = backbone(sinput)
     feats = output.F if hasattr(output, "F") else output
-    coords_xyz = vox_coords.to(device).float()
+    coords_xyz = vox_feats.to(device)
     return feats.unsqueeze(0), coords_xyz.unsqueeze(0)
 
 
@@ -778,6 +784,230 @@ def panoptic_inference_geometric_ensemble_v2(pred_logits, pred_masks, backbone_f
     return _greedy_assign(scores, labels, mask_probs, V, overlap_thr, thing_set)
 
 
+# ── Strategy K: Per-Voxel Majority Vote ───────────────────────────────────
+def panoptic_inference_voxel_vote(pred_logits, pred_masks, backbone_feats,
+                                  text_protos_all, proto_bias=None,
+                                  num_known=16, overlap_thr=0.8, alpha=0.5,
+                                  temperature=0.1, min_mask_pts=50,
+                                  novel_margin=1.2):
+    """Strategy K: Classify each voxel independently, then aggregate votes per mask.
+
+    Key insight: E[f(x)] != f(E[x]). Classifying per-voxel then averaging votes
+    preserves discriminative information that pooling destroys.
+
+    For each query mask:
+      1. Compute per-voxel cosine similarity to all prototypes
+      2. Weight by mask sigmoid to get per-query class vote
+      3. Compare novel vs known vote strength (with margin)
+      4. Use linear head when novel signal isn't strong enough
+
+    Args:
+        pred_logits: (Q, num_known+1) linear head logits.
+        pred_masks: (V, Q) mask logits.
+        backbone_feats: (V, 768) raw backbone features.
+        text_protos_all: (C, 768) text prototypes (known + novel).
+        proto_bias: (C,) optional bias correction per prototype.
+        num_known: number of known classes.
+        overlap_thr: greedy assignment overlap threshold.
+        alpha: not used directly (kept for API consistency).
+        temperature: softmax temperature for per-voxel logits.
+        min_mask_pts: minimum mask area.
+        novel_margin: novel class must beat known by this factor.
+
+    Returns:
+        tuple: (sem_pred, inst_pred) numpy arrays of shape (V,).
+    """
+    V, Q = pred_masks.shape
+    num_total = text_protos_all.shape[0]
+
+    # Per-voxel classification
+    feats_normed = F.normalize(backbone_feats.float(), dim=-1)  # (V, 768)
+    voxel_sim = feats_normed @ text_protos_all.T  # (V, C_all)
+    if proto_bias is not None:
+        voxel_sim = voxel_sim - proto_bias.unsqueeze(0)
+    voxel_logits = voxel_sim / temperature  # (V, C_all)
+
+    # Mask weights
+    masks_sig = pred_masks.sigmoid()  # (V, Q)
+    mask_area = masks_sig.sum(dim=0)  # (Q,)
+
+    # Weighted vote per query: (Q, C_all)
+    aggregated_logits = (masks_sig.T @ voxel_logits) / mask_area.clamp(min=1).unsqueeze(-1)
+
+    # Linear head
+    linear_probs = pred_logits[:, :num_known].softmax(dim=-1)  # (Q, 16)
+    no_obj_prob = pred_logits.softmax(dim=-1)[:, -1]
+    objectness = 1.0 - no_obj_prob
+
+    # Decision per query
+    scores = torch.zeros(Q, device=pred_logits.device)
+    labels = torch.zeros(Q, dtype=torch.long, device=pred_logits.device)
+
+    agg_probs = aggregated_logits.softmax(dim=-1)  # (Q, C_all)
+    best_novel_score, best_novel_cls = agg_probs[:, num_known:].max(dim=-1)  # (Q,)
+    best_known_clip_score = agg_probs[:, :num_known].max(dim=-1)[0]  # (Q,)
+    best_linear_score, best_linear_cls = linear_probs.max(dim=-1)  # (Q,)
+
+    # Novel wins if its CLIP vote exceeds known CLIP vote by margin
+    novel_wins = best_novel_score > (best_known_clip_score * novel_margin)
+
+    # Novel path
+    labels[novel_wins] = num_known + best_novel_cls[novel_wins]
+    scores[novel_wins] = best_novel_score[novel_wins] * objectness[novel_wins]
+
+    # Known path (linear head)
+    known_mask = ~novel_wins
+    labels[known_mask] = best_linear_cls[known_mask]
+    scores[known_mask] = best_linear_score[known_mask] * objectness[known_mask]
+
+    # Filter tiny masks
+    scores[mask_area < min_mask_pts] = -1.0
+
+    thing_set = THING_CLASSES_16 | set(range(num_known, num_total))
+    return _greedy_assign(scores, labels, masks_sig, V, overlap_thr, thing_set)
+
+
+# ── Strategy L: Soft Mask-Weighted Logit Aggregation ──────────────────────
+def panoptic_inference_logit_aggregation(pred_logits, pred_masks, backbone_feats,
+                                          text_protos_all, proto_bias=None,
+                                          num_known=16, overlap_thr=0.8, alpha=0.5,
+                                          temperature=0.1, min_mask_pts=50):
+    """Strategy L: Aggregate per-voxel logits (not features) within masks.
+
+    Like Strategy K but uses geometric ensemble blending (like H) instead of
+    a hard margin decision. The key difference from feature-pooling (E/G/H):
+      Feature pool: classify(average(features))  -- loses discriminability
+      Logit aggregation: average(classify(features))  -- preserves it
+
+    Formula:
+      per_voxel_logits = (cos_sim - bias) / temperature  -> (V, C_all)
+      aggregated_logits = masks_sig.T @ per_voxel_logits / mask_area  -> (Q, C_all)
+      clip_probs = softmax(aggregated_logits)
+      combined_known = linear^alpha * clip^(1-alpha)
+      combined_novel = clip only
+
+    Args:
+        Same as panoptic_inference_voxel_vote.
+
+    Returns:
+        tuple: (sem_pred, inst_pred) numpy arrays of shape (V,).
+    """
+    V, Q = pred_masks.shape
+    num_total = text_protos_all.shape[0]
+
+    # Per-voxel logits
+    feats_normed = F.normalize(backbone_feats.float(), dim=-1)
+    voxel_sim = feats_normed @ text_protos_all.T  # (V, C_all)
+    if proto_bias is not None:
+        voxel_sim = voxel_sim - proto_bias.unsqueeze(0)
+    voxel_logits = voxel_sim / temperature
+
+    # Mask-weighted aggregation
+    masks_sig = pred_masks.sigmoid()
+    mask_area = masks_sig.sum(dim=0)  # (Q,)
+    aggregated_logits = (masks_sig.T @ voxel_logits) / mask_area.clamp(min=1).unsqueeze(-1)  # (Q, C_all)
+    clip_probs = aggregated_logits.softmax(dim=-1)  # (Q, C_all)
+
+    # Linear head
+    linear_probs = pred_logits[:, :num_known].softmax(dim=-1)
+
+    # Geometric ensemble
+    combined = torch.zeros(Q, num_total, device=pred_logits.device)
+    combined[:, :num_known] = (linear_probs ** alpha) * (clip_probs[:, :num_known] ** (1 - alpha))
+    if num_total > num_known:
+        combined[:, num_known:] = clip_probs[:, num_known:]
+    combined = combined / combined.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+
+    scores, labels = combined.max(dim=-1)
+
+    # Objectness
+    no_obj_prob = pred_logits.softmax(dim=-1)[:, -1]
+    scores = scores * (1.0 - no_obj_prob)
+
+    # Filter
+    scores[mask_area < min_mask_pts] = -1.0
+
+    thing_set = THING_CLASSES_16 | set(range(num_known, num_total))
+    return _greedy_assign(scores, labels, masks_sig, V, overlap_thr, thing_set)
+
+
+# ── Strategy M: Confidence-Gated Novel Detection ─────────────────────────
+def panoptic_inference_confidence_gated(pred_logits, pred_masks, backbone_feats,
+                                         text_protos_all, proto_bias=None,
+                                         num_known=16, overlap_thr=0.8,
+                                         temperature=0.1, min_mask_pts=50,
+                                         confidence_threshold=0.7):
+    """Strategy M: Only consider novel classes when linear head is uncertain.
+
+    Uses the linear head's max confidence as a gate:
+      - If max_known_prob > threshold: trust linear head (known class)
+      - If max_known_prob <= threshold: check per-voxel CLIP logits for novel
+
+    This minimizes false positives by only triggering novel detection for
+    uncertain queries, preserving known-class PQ almost perfectly.
+
+    Args:
+        Same as panoptic_inference_voxel_vote, plus:
+        confidence_threshold: linear head confidence below which novel is considered.
+
+    Returns:
+        tuple: (sem_pred, inst_pred) numpy arrays of shape (V,).
+    """
+    V, Q = pred_masks.shape
+    num_total = text_protos_all.shape[0]
+
+    # Linear head
+    linear_probs = pred_logits[:, :num_known].softmax(dim=-1)  # (Q, 16)
+    max_known_conf, known_labels = linear_probs.max(dim=-1)
+    no_obj_prob = pred_logits.softmax(dim=-1)[:, -1]
+    objectness = 1.0 - no_obj_prob
+
+    # Per-voxel logits (only computed for uncertain queries, but vectorized for efficiency)
+    feats_normed = F.normalize(backbone_feats.float(), dim=-1)
+    voxel_sim = feats_normed @ text_protos_all.T
+    if proto_bias is not None:
+        voxel_sim = voxel_sim - proto_bias.unsqueeze(0)
+    voxel_logits = voxel_sim / temperature  # (V, C_all)
+
+    masks_sig = pred_masks.sigmoid()
+    mask_area = masks_sig.sum(dim=0)
+
+    # Aggregated logits for all queries
+    aggregated_logits = (masks_sig.T @ voxel_logits) / mask_area.clamp(min=1).unsqueeze(-1)
+    agg_probs = aggregated_logits.softmax(dim=-1)  # (Q, C_all)
+
+    # Gate: confident queries use linear head, uncertain queries check novel
+    confident = max_known_conf > confidence_threshold  # (Q,)
+
+    scores = torch.zeros(Q, device=pred_logits.device)
+    labels = torch.zeros(Q, dtype=torch.long, device=pred_logits.device)
+
+    # Confident: linear head
+    labels[confident] = known_labels[confident]
+    scores[confident] = max_known_conf[confident] * objectness[confident]
+
+    # Uncertain: compare known vs novel from CLIP aggregated logits
+    uncertain = ~confident
+    if uncertain.any():
+        unc_agg = agg_probs[uncertain]  # (U, C_all)
+        best_known_score, best_known_cls = unc_agg[:, :num_known].max(dim=-1)
+        best_novel_score, best_novel_cls = unc_agg[:, num_known:].max(dim=-1)
+
+        # Novel wins if it beats known
+        novel_wins = best_novel_score > best_known_score
+        unc_labels = torch.where(novel_wins, num_known + best_novel_cls, best_known_cls)
+        unc_scores = torch.where(novel_wins, best_novel_score, best_known_score)
+
+        labels[uncertain] = unc_labels
+        scores[uncertain] = unc_scores * objectness[uncertain]
+
+    # Filter
+    scores[mask_area < min_mask_pts] = -1.0
+
+    thing_set = THING_CLASSES_16 | set(range(num_known, num_total))
+    return _greedy_assign(scores, labels, masks_sig, V, overlap_thr, thing_set)
+
+
 # ── Novel class stats ──────────────────────────────────────────────────────
 def count_novel_detections(sem_pred, num_known=16, novel_class_names=None):
     """Count voxels and instances predicted as novel classes."""
@@ -869,6 +1099,10 @@ def main():
                         help="Comma-separated novel class names (default: police car,ambulance,trash cans,pole,bench)")
     parser.add_argument("--geo_alphas", default="0.3,0.5,0.7", help="Alpha values for geometric ensemble sweep")
     parser.add_argument("--geo_temperature", type=float, default=0.1, help="Temperature for geometric ensemble CLIP logits")
+    parser.add_argument("--no-bias", action="store_true", help="Disable prototype bias correction (ablation for K/L/M)")
+    parser.add_argument("--bias-samples", type=int, default=200, help="Number of calibration samples for prototype bias computation")
+    parser.add_argument("--novel-margin", type=float, default=1.2, help="Novel margin for voxel_vote strategy K")
+    parser.add_argument("--confidence-threshold", type=float, default=0.7, help="Confidence gate threshold for strategy M")
     parser.add_argument("--num_workers", type=int, default=0)
     args = parser.parse_args()
 
@@ -943,7 +1177,8 @@ def main():
 
     needs_16 = "token" in modes
     needs_22 = any(m in modes for m in ["backbone_pool_v2", "geometric_ensemble",
-                                         "geo_ensemble_v2"])
+                                         "geo_ensemble_v2", "voxel_vote",
+                                         "logit_aggregation", "confidence_gated"])
 
     if needs_16 or needs_22:
         if needs_22:
@@ -953,15 +1188,17 @@ def main():
             if text_protos_22 is None:
                 print("WARNING: Could not load/generate extended prototypes, skipping open-vocab modes\n", flush=True)
                 modes = [m for m in modes if m not in {"backbone_pool_v2", "geometric_ensemble",
-                                                        "geo_ensemble_v2"}]
-            # Generate multi-prompt prototypes for v2
-            if "geo_ensemble_v2" in modes:
+                                                        "geo_ensemble_v2", "voxel_vote",
+                                                        "logit_aggregation", "confidence_gated"}]
+            # Generate multi-prompt prototypes for v2 and K/L/M
+            klm_modes = {"geo_ensemble_v2", "voxel_vote", "logit_aggregation", "confidence_gated"}
+            if klm_modes & set(modes):
                 _, text_protos_mp = generate_multi_prompt_prototypes(
                     proto_path, device, novel_class_names
                 )
                 if text_protos_mp is None:
-                    print("WARNING: Could not generate multi-prompt prototypes, skipping geo_ensemble_v2\n", flush=True)
-                    modes = [m for m in modes if m != "geo_ensemble_v2"]
+                    print("WARNING: Could not generate multi-prompt prototypes, skipping v2/K/L/M modes\n", flush=True)
+                    modes = [m for m in modes if m not in klm_modes]
         else:
             proto_data = torch.load(proto_path, map_location="cpu")
             text_protos_16 = proto_data["embeddings"].float().to(device)
@@ -995,10 +1232,11 @@ def main():
         modes = [m for m in modes if m not in token_modes]
 
     # ── Compute prototype bias for geo_ensemble_v2 ──
-    if "geo_ensemble_v2" in modes and text_protos_mp is not None:
+    if any(m in modes for m in ["geo_ensemble_v2", "voxel_vote", "logit_aggregation",
+                                   "confidence_gated"]) and text_protos_mp is not None:
         print("Computing prototype bias (calibration on 50 samples)...", flush=True)
-        proto_bias = compute_prototype_bias(backbone, val_loader, text_protos_mp, device)
-        print(f"  Proto bias: {proto_bias}", flush=True)
+        proto_bias = compute_prototype_bias(backbone, val_loader, text_protos_mp, device, num_calibration=args.bias_samples)
+        print(f"  Proto bias (calibrated on {args.bias_samples} samples): {proto_bias}", flush=True)
 
     # ── Setup evaluators ──
     num_classes = cfg["model"]["num_classes"]
@@ -1018,17 +1256,34 @@ def main():
     if "geo_ensemble_v2" in modes:
         for ga in geo_alphas:
             evaluators[f"geo_v2_a{ga:.1f}"] = PanopticEval(n_classes=num_classes, min_points=min_points)
+    if "voxel_vote" in modes:
+        evaluators["voxel_vote"] = PanopticEval(n_classes=num_classes, min_points=min_points)
+    if "logit_aggregation" in modes:
+        for ga in geo_alphas:
+            evaluators[f"logit_agg_a{ga:.1f}"] = PanopticEval(n_classes=num_classes, min_points=min_points)
+    if "confidence_gated" in modes:
+        evaluators["confidence_gated"] = PanopticEval(n_classes=num_classes, min_points=min_points)
 
     novel_stats_agg = {
         "backbone_pool_v2": {name: {"voxels": 0} for name in novel_class_names},
         "geometric_ensemble": {name: {"voxels": 0} for name in novel_class_names},
         "geo_ensemble_v2": {name: {"voxels": 0} for name in novel_class_names},
+        "voxel_vote": {name: {"voxels": 0} for name in novel_class_names},
+        "logit_aggregation": {name: {"voxels": 0} for name in novel_class_names},
+        "confidence_gated": {name: {"voxels": 0} for name in novel_class_names},
     }
+
+    # Per-scene novel detection tracking (for visualization filtering)
+    per_scene_novel = {}  # {sample_token: {mode: {class_name: voxel_count}}}
+
+    # Handle --no-bias ablation
+    klm_proto_bias = None if args.no_bias else proto_bias
 
     # ── Evaluation loop ──
     print(f"Evaluating {len(val_ds)} samples across modes: {modes}\n", flush=True)
     with torch.no_grad():
         for i, batch in enumerate(val_loader):
+            sample_token = batch.get("token", [f"sample_{i}"])[0] if isinstance(batch.get("token"), list) else batch.get("token", f"sample_{i}")
             feats, coords = extract_backbone_features(backbone, batch, device)
             outputs = decoder(feats, coords)
 
@@ -1071,6 +1326,9 @@ def main():
                 stats_f = count_novel_detections(sem_f, num_classes, novel_class_names)
                 for name, s in stats_f.items():
                     novel_stats_agg["backbone_pool_v2"][name]["voxels"] += s["voxels"]
+                scene_novel = {name: s["voxels"] for name, s in stats_f.items() if s["voxels"] > 0}
+                if scene_novel:
+                    per_scene_novel.setdefault(sample_token, {})["backbone_pool_v2"] = scene_novel
                 sem_f_known, inst_f_known = remap_novel_to_ignore(sem_f, inst_f, num_classes)
                 evaluators["backbone_pool_v2_known"].addBatch(
                     sem_f_known[valid], inst_f_known[valid], gt_sem[valid], gt_inst[valid]
@@ -1090,6 +1348,9 @@ def main():
                         stats_g = count_novel_detections(sem_g, num_classes, novel_class_names)
                         for name, s in stats_g.items():
                             novel_stats_agg["geometric_ensemble"][name]["voxels"] += s["voxels"]
+                        scene_novel = {name: s["voxels"] for name, s in stats_g.items() if s["voxels"] > 0}
+                        if scene_novel:
+                            per_scene_novel.setdefault(sample_token, {})["geometric_ensemble"] = scene_novel
                     sem_g_known, inst_g_known = remap_novel_to_ignore(sem_g, inst_g, num_classes)
                     evaluators[f"geo_ensemble_a{ga:.1f}"].addBatch(
                         sem_g_known[valid], inst_g_known[valid], gt_sem[valid], gt_inst[valid]
@@ -1109,10 +1370,79 @@ def main():
                         stats_h = count_novel_detections(sem_h, num_classes, novel_class_names)
                         for name, s in stats_h.items():
                             novel_stats_agg["geo_ensemble_v2"][name]["voxels"] += s["voxels"]
+                        scene_novel = {name: s["voxels"] for name, s in stats_h.items() if s["voxels"] > 0}
+                        if scene_novel:
+                            per_scene_novel.setdefault(sample_token, {})["geo_ensemble_v2"] = scene_novel
                     sem_h_known, inst_h_known = remap_novel_to_ignore(sem_h, inst_h, num_classes)
                     evaluators[f"geo_v2_a{ga:.1f}"].addBatch(
                         sem_h_known[valid], inst_h_known[valid], gt_sem[valid], gt_inst[valid]
                     )
+
+            # K: Per-Voxel Majority Vote (Strategy K)
+            if "voxel_vote" in modes:
+                backbone_feats_v = feats[0]
+                sem_k, inst_k = panoptic_inference_voxel_vote(
+                    pl.to(device), pm.to(device), backbone_feats_v,
+                    text_protos_mp, klm_proto_bias,
+                    num_known=num_classes, overlap_thr=overlap_thr,
+                    alpha=geo_alphas[0], temperature=args.geo_temperature,
+                    min_mask_pts=min_points, novel_margin=args.novel_margin,
+                )
+                stats_k = count_novel_detections(sem_k, num_classes, novel_class_names)
+                for name, s in stats_k.items():
+                    novel_stats_agg["voxel_vote"][name]["voxels"] += s["voxels"]
+                # Per-scene tracking
+                scene_novel = {name: s["voxels"] for name, s in stats_k.items() if s["voxels"] > 0}
+                if scene_novel:
+                    per_scene_novel.setdefault(sample_token, {})["voxel_vote"] = scene_novel
+                sem_k_known, inst_k_known = remap_novel_to_ignore(sem_k, inst_k, num_classes)
+                evaluators["voxel_vote"].addBatch(
+                    sem_k_known[valid], inst_k_known[valid], gt_sem[valid], gt_inst[valid]
+                )
+
+            # L: Logit Aggregation (Strategy L) — alpha sweep
+            if "logit_aggregation" in modes:
+                backbone_feats_v = feats[0]
+                for ga in geo_alphas:
+                    sem_l, inst_l = panoptic_inference_logit_aggregation(
+                        pl.to(device), pm.to(device), backbone_feats_v,
+                        text_protos_mp, klm_proto_bias,
+                        num_known=num_classes, overlap_thr=overlap_thr,
+                        alpha=ga, temperature=args.geo_temperature,
+                        min_mask_pts=min_points,
+                    )
+                    if ga == geo_alphas[0]:
+                        stats_l = count_novel_detections(sem_l, num_classes, novel_class_names)
+                        for name, s in stats_l.items():
+                            novel_stats_agg["logit_aggregation"][name]["voxels"] += s["voxels"]
+                        scene_novel = {name: s["voxels"] for name, s in stats_l.items() if s["voxels"] > 0}
+                        if scene_novel:
+                            per_scene_novel.setdefault(sample_token, {})["logit_aggregation"] = scene_novel
+                    sem_l_known, inst_l_known = remap_novel_to_ignore(sem_l, inst_l, num_classes)
+                    evaluators[f"logit_agg_a{ga:.1f}"].addBatch(
+                        sem_l_known[valid], inst_l_known[valid], gt_sem[valid], gt_inst[valid]
+                    )
+
+            # M: Confidence-Gated Novel Detection (Strategy M)
+            if "confidence_gated" in modes:
+                backbone_feats_v = feats[0]
+                sem_m, inst_m = panoptic_inference_confidence_gated(
+                    pl.to(device), pm.to(device), backbone_feats_v,
+                    text_protos_mp, klm_proto_bias,
+                    num_known=num_classes, overlap_thr=overlap_thr,
+                    temperature=args.geo_temperature, min_mask_pts=min_points,
+                    confidence_threshold=args.confidence_threshold,
+                )
+                stats_m = count_novel_detections(sem_m, num_classes, novel_class_names)
+                for name, s in stats_m.items():
+                    novel_stats_agg["confidence_gated"][name]["voxels"] += s["voxels"]
+                scene_novel = {name: s["voxels"] for name, s in stats_m.items() if s["voxels"] > 0}
+                if scene_novel:
+                    per_scene_novel.setdefault(sample_token, {})["confidence_gated"] = scene_novel
+                sem_m_known, inst_m_known = remap_novel_to_ignore(sem_m, inst_m, num_classes)
+                evaluators["confidence_gated"].addBatch(
+                    sem_m_known[valid], inst_m_known[valid], gt_sem[valid], gt_inst[valid]
+                )
 
             if (i + 1) % 50 == 0:
                 print(f"  [{i+1}/{len(val_ds)}]", flush=True)
@@ -1140,10 +1470,18 @@ def main():
         novel_total = "N/A"
         # Match evaluator key to novel_stats_agg key
         mode_key = name.replace("_known", "")
-        for agg_key in novel_stats_agg:
-            if mode_key.startswith(agg_key) or mode_key.startswith(agg_key.replace("_ensemble", "")):
-                novel_total = sum(s["voxels"] for s in novel_stats_agg[agg_key].values())
-                break
+        if mode_key.startswith("backbone_pool_v2"):
+            novel_total = sum(s["voxels"] for s in novel_stats_agg.get("backbone_pool_v2", {}).values())
+        elif mode_key.startswith("geo_ensemble_a"):
+            novel_total = sum(s["voxels"] for s in novel_stats_agg.get("geometric_ensemble", {}).values())
+        elif mode_key.startswith("geo_v2_a"):
+            novel_total = sum(s["voxels"] for s in novel_stats_agg.get("geo_ensemble_v2", {}).values())
+        elif mode_key.startswith("voxel_vote"):
+            novel_total = sum(s["voxels"] for s in novel_stats_agg.get("voxel_vote", {}).values())
+        elif mode_key.startswith("logit_agg"):
+            novel_total = sum(s["voxels"] for s in novel_stats_agg.get("logit_aggregation", {}).values())
+        elif mode_key.startswith("confidence_gated"):
+            novel_total = sum(s["voxels"] for s in novel_stats_agg.get("confidence_gated", {}).values())
 
         summary_rows.append((name, PQ, SQ, RQ, iou_mean, novel_total))
 
@@ -1187,9 +1525,18 @@ def main():
             print(f"  Best geo v2 (multi-prompt): {best_geo_v2} (PQ={results[best_geo_v2]['PQ']:.4f})", flush=True)
             results["best_geo_v2"] = {"name": best_geo_v2, **results[best_geo_v2]}
 
+    # Find best logit aggregation alpha
+    if "logit_aggregation" in modes:
+        la_keys = [k for k in results if k.startswith("logit_agg_a")]
+        if la_keys:
+            best_la = max(la_keys, key=lambda k: results[k]["PQ"])
+            print(f"  Best logit aggregation: {best_la} (PQ={results[best_la]['PQ']:.4f})", flush=True)
+            results["best_logit_agg"] = {"name": best_la, **results[best_la]}
+
     # ── Novel detection comparison ──
     openvocab_modes_active = [m for m in ["backbone_pool_v2", "geometric_ensemble",
-                                           "geo_ensemble_v2"] if m in modes]
+                                           "geo_ensemble_v2", "voxel_vote",
+                                           "logit_aggregation", "confidence_gated"] if m in modes]
     if openvocab_modes_active:
         print(f"\n{'='*70}", flush=True)
         print(f"  NOVEL CLASS DETECTIONS", flush=True)
@@ -1214,6 +1561,30 @@ def main():
         with open(out_dir / "novel_detections.json", "w") as f:
             json.dump(novel_stats_agg, f, indent=2)
         print(f"Saved novel_detections.json to {out_dir}", flush=True)
+
+    # Save per-scene novel detection breakdown (per strategy, for visualization filtering)
+    if per_scene_novel:
+        # Restructure: {strategy: [{token, total, per_class}, ...] sorted by total desc}
+        per_strategy_scenes = {}
+        for token, modes_dict in per_scene_novel.items():
+            for mode, cls_dict in modes_dict.items():
+                entry = {"token": token, "total": sum(cls_dict.values()), **cls_dict}
+                per_strategy_scenes.setdefault(mode, []).append(entry)
+
+        # Sort each strategy's list by total descending
+        for mode in per_strategy_scenes:
+            per_strategy_scenes[mode].sort(key=lambda x: x["total"], reverse=True)
+
+        with open(out_dir / "per_scene_novel_detections.json", "w") as f:
+            json.dump(per_strategy_scenes, f, indent=2)
+        print(f"Saved per_scene_novel_detections.json", flush=True)
+
+        # Print top-20 per strategy
+        for mode, scenes in per_strategy_scenes.items():
+            print(f"\n  Top-20 scenes for [{mode}] ({len(scenes)} scenes with novel voxels):", flush=True)
+            for rank, entry in enumerate(scenes[:20], 1):
+                cls_info = {k: v for k, v in entry.items() if k not in ("token", "total")}
+                print(f"    {rank:>2d}. {entry['token']}  total={entry['total']:>8,d}  {cls_info}", flush=True)
 
     print(f"\nDone. All outputs in: {out_dir}", flush=True)
 
