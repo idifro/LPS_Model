@@ -120,6 +120,7 @@ class NuScenesPanoptic(Dataset):
         augment: bool = False,
         aug_cfg: dict = None,
         nusc: "NuScenes" = None,
+        clip_feat_dir: str = None,
     ):
         """Initialize NuScenes panoptic dataset by loading the API and building the sample token list.
 
@@ -150,8 +151,9 @@ class NuScenesPanoptic(Dataset):
         self.version = version
         self.voxel_size = voxel_size
         self.point_range = point_range if point_range is not None else DEFAULT_RANGE
-        self.augment = augment
+        self.augment = augment if not clip_feat_dir else False  # disable aug for CLIP alignment
         self.aug_cfg = aug_cfg or {}
+        self.clip_feat_dir = clip_feat_dir
 
         self.nusc = nusc if nusc is not None else NuScenes(version=version, dataroot=dataroot, verbose=False)
 
@@ -321,7 +323,7 @@ class NuScenesPanoptic(Dataset):
             cam_paths.append(os.path.join(self.dataroot, sd["filename"]))
 
         # ── 6. Convert to tensors ──
-        return {
+        result = {
             "vox_coords": torch.from_numpy(vox_coords).int(),         # (V, 3)
             "vox_feats": torch.from_numpy(vox_feats).float(),         # (V, 3)
             "gt_masks": torch.from_numpy(gt_masks_arr).bool(),        # (M, V)
@@ -333,3 +335,25 @@ class NuScenesPanoptic(Dataset):
             "cam_paths": cam_paths,
             "token": token,
         }
+
+        # ── 7. Load precomputed CLIP features (Job 1b) ──
+        if self.clip_feat_dir:
+            feat_path = os.path.join(self.clip_feat_dir, self.version, f"{token}.npz")
+            if os.path.exists(feat_path):
+                data = np.load(feat_path)
+                result["obj_clip_feats"] = torch.from_numpy(
+                    data["obj_feats"].astype(np.float32))       # (N_inst, 768)
+                result["obj_clip_classes"] = torch.from_numpy(
+                    data["obj_classes"].astype(np.int64))        # (N_inst,)
+                result["vox_clip_feats"] = torch.from_numpy(
+                    data["vox_feats"].astype(np.float32))        # (4096, 768)
+                result["vox_clip_indices"] = torch.from_numpy(
+                    data["vox_indices"].astype(np.int64))         # (4096,)
+            else:
+                # Fallback: zeros (sample will contribute no distillation loss)
+                result["obj_clip_feats"] = torch.zeros(0, 768)
+                result["obj_clip_classes"] = torch.zeros(0, dtype=torch.long)
+                result["vox_clip_feats"] = torch.zeros(4096, 768)
+                result["vox_clip_indices"] = torch.zeros(4096, dtype=torch.long)
+
+        return result

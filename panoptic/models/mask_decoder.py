@@ -4,12 +4,48 @@ Adapted from MaskPLS/Mask2Former for single-level backbone features (frozen DisN
 Design: 100 thing queries (learnable) + 6 stuff queries (fixed per class) = 106 total.
 9 decoder layers (3 blocks x 3 virtual levels, single-level features repeated).
 """
+import numpy as np
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from panoptic.models.blocks import SelfAttentionLayer, CrossAttentionLayer, FFNLayer, MLP
 from panoptic.models.positional_encoder import PositionalEncoder
 from panoptic.models.clip_token_head import CLIPTokenHead
+
+
+class SingleCLIPEmbeddingHead(nn.Module):
+    """Single CLIP embedding head (A4) replacing dual linear+token architecture.
+
+    Classification at inference: argmax(embed @ text_protos.T / temperature)
+    No separate linear head — single pathway to CLIP space.
+
+    Args:
+        hidden_dim: decoder output dimension (256)
+        clip_dim: CLIP embedding dimension (768)
+        num_layers: MLP depth (3)
+    """
+
+    def __init__(self, hidden_dim=256, clip_dim=768, num_layers=3):
+        super().__init__()
+        # Same MLP structure as CLIPTokenHead
+        dims = [hidden_dim] + [hidden_dim * 2] * (num_layers - 1) + [clip_dim]
+        layers = []
+        for i in range(len(dims) - 1):
+            layers.append(nn.Linear(dims[i], dims[i + 1]))
+            if i < len(dims) - 2:
+                layers.append(nn.ReLU(inplace=True))
+        self.mlp = nn.Sequential(*layers)
+        # Learnable temperature
+        self.log_temperature = nn.Parameter(torch.tensor(np.log(1.0 / 0.07)))
+
+    def forward(self, x):
+        """x: (B, Q, hidden_dim) → (B, Q, clip_dim) L2-normalized."""
+        return F.normalize(self.mlp(x), dim=-1)
+
+    @property
+    def temperature(self):
+        return self.log_temperature.exp().clamp(min=0.01, max=100.0)
 
 
 class PanopticDecoder(nn.Module):
@@ -140,6 +176,25 @@ class PanopticDecoder(nn.Module):
         # Optional CLIP token head
         self.token_head = CLIPTokenHead(hidden_dim, token_dim) if use_token_head else None
 
+        # Single CLIP embedding head (A4) — alternative to class_embed + token_head
+        self.head_type = "dual"  # "dual" (default) or "single_clip"
+        self.clip_embed_head = None
+        self.objectness_head = None
+
+    def enable_single_clip_head(self, clip_dim=768, num_layers=3):
+        """Switch to single CLIP embedding head mode (A4).
+
+        Disables class_embed and token_head. Adds SingleCLIPEmbeddingHead
+        and objectness_head. Call after __init__ and before training.
+        """
+        self.head_type = "single_clip"
+        self.clip_embed_head = SingleCLIPEmbeddingHead(
+            self.hidden_dim, clip_dim, num_layers
+        )
+        self.objectness_head = nn.Linear(self.hidden_dim, 1)
+        # Disable old heads (keep weights for warm-start compatibility)
+        # class_embed and token_head are still in state_dict but unused
+
     def forward(self, backbone_feats, coords, pad_mask=None):
         """
         Args:
@@ -179,7 +234,9 @@ class PanopticDecoder(nn.Module):
         )
         predictions_class.append(outputs_class)
         predictions_mask.append(outputs_mask)
-        if self.token_head is not None:
+        if self.head_type == "single_clip" and self.clip_embed_head is not None:
+            predictions_tokens.append(self.clip_embed_head(self.decoder_norm(output)))
+        elif self.token_head is not None:
             predictions_tokens.append(self.token_head(self.decoder_norm(output)))
 
         for i in range(self.num_layers):
@@ -215,7 +272,9 @@ class PanopticDecoder(nn.Module):
             )
             predictions_class.append(outputs_class)
             predictions_mask.append(outputs_mask)
-            if self.token_head is not None:
+            if self.head_type == "single_clip" and self.clip_embed_head is not None:
+                predictions_tokens.append(self.clip_embed_head(self.decoder_norm(output)))
+            elif self.token_head is not None:
                 predictions_tokens.append(self.token_head(self.decoder_norm(output)))
 
         assert len(predictions_class) == self.num_layers + 1
@@ -224,14 +283,30 @@ class PanopticDecoder(nn.Module):
             "pred_logits": predictions_class[-1],  # (B, 106, 17)
             "pred_masks": predictions_mask[-1],     # (B, V, 106)
         }
-        if self.token_head is not None:
-            out["pred_tokens"] = predictions_tokens[-1]  # (B, 106, token_dim)
+
+        # Add embeddings (single_clip mode) or tokens (dual mode)
+        if self.head_type == "single_clip" and predictions_tokens:
+            out["pred_embed"] = predictions_tokens[-1]  # (B, 106, 768)
+            # Objectness scores
+            out["pred_obj"] = self.objectness_head(
+                self.decoder_norm(output)
+            )  # (B, 106, 1)
+
         if self.token_head is not None and predictions_tokens:
-            out["aux_outputs"] = [
-                {"pred_logits": c, "pred_masks": m, "pred_tokens": t}
-                for c, m, t in zip(predictions_class[:-1], predictions_mask[:-1],
-                                   predictions_tokens[:-1])
-            ]
+            out["pred_tokens"] = predictions_tokens[-1]  # (B, 106, token_dim)
+
+        if predictions_tokens:
+            if self.head_type == "single_clip":
+                out["aux_outputs"] = [
+                    {"pred_embed": t, "pred_masks": m}
+                    for t, m in zip(predictions_tokens[:-1], predictions_mask[:-1])
+                ]
+            else:
+                out["aux_outputs"] = [
+                    {"pred_logits": c, "pred_masks": m, "pred_tokens": t}
+                    for c, m, t in zip(predictions_class[:-1], predictions_mask[:-1],
+                                       predictions_tokens[:-1])
+                ]
         else:
             out["aux_outputs"] = [
                 {"pred_logits": c, "pred_masks": m}

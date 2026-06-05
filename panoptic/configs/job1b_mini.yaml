@@ -1,0 +1,84 @@
+# Job 1b Mini: Smoke test for distillation on v1.0-mini
+
+data:
+  dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini
+  version: v1.0-mini
+  voxel_size: 0.05
+
+model:
+  backbone_ckpt: models/nuscenes_openseg.pth.tar
+  backbone_dim: 768
+  hidden_dim: 256
+  num_classes: 16
+  num_thing_queries: 100
+  num_stuff_classes: 6
+  nheads: 8
+  dim_feedforward: 1024
+  num_blocks: 3
+  num_levels: 3
+  dropout: 0.0
+  clip_embed_dim: 768
+  head_type: single_clip
+
+lora:
+  enabled: true
+  rank: 16
+  dropout: 0.05
+
+warm_start:
+  checkpoint: panoptic/checkpoints_job1a_mini/best.pth
+
+loss:
+  cost_class: 0.0
+  cost_mask: 5.0
+  cost_dice: 5.0
+  eos_coef: 0.1
+  weight_ce: 0.0
+  weight_mask: 5.0
+  weight_dice: 5.0
+  weight_obj: 2.0
+  p_ratio: 0.75
+
+token:
+  prototype_path: panoptic/clip_prototypes/text_prototypes_vitl14_224.pt
+  negative_bank: panoptic/clip_prototypes/negative_bank_200.pt
+  multiprompt_path: panoptic/clip_prototypes/text_prototypes_vitl14_224_multiprompt.pt
+  learnable_temperature: true
+  weight: 1.0
+
+distillation:
+  enabled: true
+  clip_feat_dir: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/clip_features
+  L_O:
+    weight: 1.0
+    warmup_epochs: 1
+    loss_type: cosine
+  L_V:
+    weight: 0.1
+    warmup_epochs: 2
+    loss_type: cosine
+
+training:
+  lr_decoder: 3.0e-5
+  lr_token_head: 5.0e-5
+  lr_lora: 5.0e-5
+  weight_decay: 0.01
+  epochs: 3
+  warmup_epochs: 1
+  min_lr: 1.0e-6
+  mixed_precision: true
+  grad_accum: 2
+  grad_clip: 0.5
+  num_workers: 0
+  phase1_epochs: 1
+
+logging:
+  log_every: 10
+  eval_every: 1
+  wandb_enabled: true
+  wandb_project: openscene-panoptic
+  wandb_run_name: job1b-mini-smoke
+
+checkpoint:
+  save_dir: panoptic/checkpoints_job1b_mini
+  save_every: 1

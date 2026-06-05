@@ -156,7 +156,8 @@ class PanopticLoss(nn.Module):
                 'loss_dice' containing scalar loss tensors.
         """
         losses = {}
-        losses.update(self._loss_class(outputs, targets, indices))
+        if "pred_logits" in outputs:
+            losses.update(self._loss_class(outputs, targets, indices))
         losses.update(self._loss_masks(outputs, targets, indices, num_masks))
         return losses
 

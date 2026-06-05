@@ -67,17 +67,24 @@ class HungarianMatcher(nn.Module):
         Returns:
             list of (pred_idx, tgt_idx) tuples per batch element
         """
-        bs, num_queries, num_classes = outputs["pred_logits"].shape
+        if "pred_logits" in outputs:
+            bs, num_queries, _ = outputs["pred_logits"].shape
+        else:
+            bs = outputs["pred_masks"].shape[0]
+            num_queries = outputs["pred_masks"].shape[2]
         indices = []
         for b in range(bs):
-            out_prob = outputs["pred_logits"][b].softmax(-1)
             tgt_ids = targets["classes"][b].long()
             if len(tgt_ids) == 0:
                 indices.append((torch.tensor([], dtype=torch.int64),
                                 torch.tensor([], dtype=torch.int64)))
                 continue
 
-            cost_class = -out_prob[:, tgt_ids]  # (Q, M)
+            # Class cost (skip if cost_class=0 or no logits)
+            cost_class = None
+            if self.cost_class > 0 and "pred_logits" in outputs:
+                out_prob = outputs["pred_logits"][b].softmax(-1)
+                cost_class = -out_prob[:, tgt_ids]  # (Q, M)
 
             out_mask = outputs["pred_masks"][b].permute(1, 0)  # (Q, V)
             tgt_mask = targets["masks"][b].to(out_mask)        # (M, V)
@@ -100,11 +107,11 @@ class HungarianMatcher(nn.Module):
                 cost_mask_val = _batch_sigmoid_ce_cost(out_mask_s, tgt_mask_s)
                 cost_dice_val = _batch_dice_cost(out_mask_s, tgt_mask_s)
 
-            C = (
-                self.cost_class * cost_class
-                + self.cost_mask * cost_mask_val
-                + self.cost_dice * cost_dice_val
-            )
+            # Skip class cost when cost_class=0 (single CLIP head mode)
+            C = self.cost_mask * cost_mask_val + self.cost_dice * cost_dice_val
+            if self.cost_class > 0 and cost_class is not None:
+                C = C + self.cost_class * cost_class
+
             C = C.reshape(num_queries, -1).cpu()
             indices.append(lsa(C))
 
