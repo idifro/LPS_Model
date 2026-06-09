@@ -46,7 +46,7 @@ e2e:
   # Epoch to start unfreezing (0 = from the beginning, >0 = freeze first N epochs)
   unfreeze_after_epoch: 5
   # Warm-start from frozen-backbone checkpoint
-  warmstart_ckpt: panoptic/checkpoints/best.pth
+  warmstart_ckpt: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/panoptic/checkpoints_token_full_v2/best.pth
 
 # ── Loss ──
 loss:

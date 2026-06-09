@@ -17,6 +17,9 @@ module load conda
 conda activate opensc_env
 module load cuda/11.0.2
 module load cudnn/11.0_v8.0
+module load gcc/5.4.0
+# gcc/5.4.0 provides real libgfortran.so.3 with GFORTRAN_1.0 needed by libopenblas
+export LD_LIBRARY_PATH=$(dirname $(gcc --print-file-name=libgfortran.so.3)):$LD_LIBRARY_PATH
 
 export PYTHONPATH=/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/vandana_experiments/LPS_Model
 export OMP_NUM_THREADS=4

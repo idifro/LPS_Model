@@ -15,12 +15,25 @@ Outputs (matching paper Table 1):
   PQ, SQ, RQ (all 16), PQ_B (base 12), PQ_N (novel 4),
   PQ_NTh (novel things), PQ_NSt (novel stuff), mIoU
 
+Novel class detection mechanism:
+  The backbone was pre-distilled from OpenSeg/CLIP → its output F_backbone is
+  in CLIP space. L_V during training forces ALL query embeddings (including those
+  over novel regions) to reconstruct F_backbone, keeping them in CLIP space.
+  At inference, cos(query_embed, text["bicycle"]) is high for bicycle queries
+  even though bicycle never appeared in training labels.
+
+  Problem: base classes always win argmax because they have explicit training signal.
+  Fix: base-class suppression threshold τ (--novel_threshold):
+    if max_base_confidence < τ → predict the best novel class instead
+    Tune τ on mini val after Gate 2. Default τ=0.4.
+
 Usage:
-  python panoptic/eval/eval_b12n4.py \
-      --checkpoint panoptic/checkpoints_openvocab_mini/best.pth \
-      --split b12n4_main \
-      --version v1.0-mini \
-      --dataroot /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini
+  python panoptic/eval/eval_b12n4.py \\
+      --checkpoint panoptic/checkpoints_openvocab_mini/best.pth \\
+      --split b12n4_main \\
+      --version v1.0-mini \\
+      --dataroot /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini \\
+      --novel_threshold 0.4
 """
 
 import sys
@@ -172,9 +185,9 @@ def evaluate_checkpoint(args):
 
             # Get predictions — handles both model and backbone-pool paths
             if model is not None:
-                pred_sem, pred_inst = _model_inference(model, sample, text_embeds, device)
+                pred_sem, pred_inst = _model_inference(model, sample, text_embeds, device, split_cfg, args.novel_threshold)
             else:
-                pred_sem, pred_inst = _backbone_pool_inference(sample, text_embeds, device)
+                pred_sem, pred_inst = _backbone_pool_inference(sample, text_embeds, device, split_cfg, args.novel_threshold)
 
             gt_sem  = sample["gt_semantic"].numpy().astype(np.int32)   # [N]
             gt_inst = sample["gt_instance"].numpy().astype(np.int32)   # [N]
@@ -254,7 +267,7 @@ def evaluate_checkpoint(args):
     return results
 
 
-def _model_inference(model, sample, text_embeds, device):
+def _model_inference(model, sample, text_embeds, device, split_cfg, threshold=0.0):
     """Run model forward pass and return (pred_sem, pred_inst) as numpy arrays."""
     # Placeholder — actual implementation depends on PanopticDecoder API
     # Will be completed when train_openvocab_e2e.py inference path is finalized
@@ -264,14 +277,64 @@ def _model_inference(model, sample, text_embeds, device):
     )
 
 
-def _backbone_pool_inference(sample, text_embeds, device):
-    """Use backbone CLIP features + mask pooling for open-vocab classification."""
+def _apply_novel_threshold(logits, base_idx, novel_idx, threshold):
+    """Base-class suppression threshold for novel class detection.
+
+    Problem: at test time argmax always favours base classes — they have 12× more
+    training signal than novel classes. Novel classes never win even when CLIP
+    similarity is meaningful. This is why Token-OpenVocab shows 0 novel detections.
+
+    Fix: if the best base class confidence is below threshold τ, predict the best
+    novel class instead. This gives novel classes a fair chance without retraining.
+
+    Args:
+        logits:    (N, 16) cosine similarity logits for all 16 classes
+        base_idx:  list of 12 base class indices
+        novel_idx: list of 4 novel class indices
+        threshold: τ — if max base confidence < τ, use novel prediction.
+                   Tune on mini val. Typical range: 0.3–0.6.
+
+    Returns:
+        pred_class: (N,) predicted class indices (0–15)
+    """
+    if threshold <= 0.0:
+        # No threshold — standard argmax (base classes dominate)
+        return logits.argmax(dim=-1).cpu().numpy()
+
+    base_idx_t  = torch.tensor(base_idx,  dtype=torch.long, device=logits.device)
+    novel_idx_t = torch.tensor(novel_idx, dtype=torch.long, device=logits.device)
+
+    base_logits  = logits[:, base_idx_t]   # (N, 12)
+    novel_logits = logits[:, novel_idx_t]  # (N, 4)
+
+    max_base_conf = base_logits.max(dim=-1).values  # (N,)
+    best_base  = base_idx_t[base_logits.argmax(dim=-1)]    # (N,) actual class index
+    best_novel = novel_idx_t[novel_logits.argmax(dim=-1)]  # (N,) actual class index
+
+    pred = torch.where(max_base_conf < threshold, best_novel, best_base)
+    return pred.cpu().numpy()
+
+
+def _backbone_pool_inference(sample, text_embeds, device, split_cfg, threshold=0.0):
+    """Use backbone CLIP features + cosine similarity for open-vocab classification.
+
+    The backbone output is in CLIP space (pre-distilled from OpenSeg).
+    Cosine similarity with all 16 text embeddings gives per-voxel class scores.
+    Novel classes (bicycle, vegetation etc.) are detectable via CLIP similarity
+    even though they had zero training labels.
+
+    Base-class suppression threshold τ: applied to give novel classes a fair shot.
+    """
     backbone_feats = sample["backbone_features"].to(device)  # [N, 768]
-    # Cosine similarity with all 16 text embeds → per-voxel semantic prediction
     backbone_feats = backbone_feats / (backbone_feats.norm(dim=-1, keepdim=True) + 1e-8)
-    sim = backbone_feats @ text_embeds.T  # [N, 16]
-    pred_sem = sim.argmax(dim=-1).cpu().numpy()
-    # Instance: treat each connected component as separate instance (simplified)
+    logits = backbone_feats @ text_embeds.T  # [N, 16]
+
+    pred_sem = _apply_novel_threshold(
+        logits,
+        base_idx=split_cfg["base_idx"],
+        novel_idx=split_cfg["novel_idx"],
+        threshold=threshold,
+    )
     pred_inst = np.zeros_like(pred_sem)
     return pred_sem, pred_inst
 
@@ -293,6 +356,13 @@ def main():
                         help="Path to save JSON results (optional)")
     parser.add_argument("--use_backbone_pool", action="store_true",
                         help="Use backbone feature pooling instead of full model")
+    parser.add_argument("--novel_threshold", type=float, default=0.0,
+                        help=(
+                            "Base-class suppression threshold τ (0=disabled). "
+                            "If max base-class confidence < τ, predict best novel class. "
+                            "Fixes 0-novel-detection problem. Tune on mini val. "
+                            "Typical range: 0.3-0.6. Start with 0.4."
+                        ))
     args = parser.parse_args()
 
     if args.version == "v1.0-trainval":

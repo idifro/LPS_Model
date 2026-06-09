@@ -58,19 +58,18 @@ context_encoder:
   lr: 5.0e-5          # Medium LR: faster than backbone, slower than decoder
 
 # ── E2E Backbone ──
-# Training from scratch — NO warmstart checkpoint.
-# Encoder (conv1-conv4) is UNFROZEN with a very low lr to allow E2E backprop.
-# Risk: with only 323 mini scenes this may overfit; monitor val PQ carefully.
-# unfreeze_encoder: true         → calls unfreeze_encoder_stages() after warmup
-# encoder_lr: 1.0e-7             → 50x lower than backbone decoder lr
+# Encoder (conv1-conv4) stays FROZEN throughout Gates 0-4.
+# Only decoder + SceneContextEncoder + query heads are trained.
+# F_backbone is used as the fixed distillation target for L_O and L_V.
+# Unfreezing the encoder would make L_V chase a moving target → collapse.
 e2e:
   enabled: true
-  unfreeze_mode: all              # Unfreeze encoder + decoder (not decoder_only)
-  backbone_lr: 5.0e-6             # Backbone decoder lr
-  encoder_lr: 1.0e-7              # Encoder lr — very low to avoid destroying CLIP geometry
-  unfreeze_after_epoch: 5         # Warmup decoder + ctx encoder first, then unfreeze encoder
-  unfreeze_encoder: true          # Set to false to revert to frozen encoder
-  warmstart_ckpt: null            # Train from scratch
+  unfreeze_mode: decoder_only     # FROZEN encoder. Only convtr1-4, final, context encoder train.
+  backbone_lr: 5.0e-6             # SceneContextEncoder lr (NOT encoder conv stages)
+  encoder_lr: 0.0                 # Encoder lr = 0 — no gradient into conv1-conv4
+  unfreeze_after_epoch: 3         # Warm up decoder query heads first, then add context encoder
+  unfreeze_encoder: false         # MUST be false — encoder frozen throughout Gates 0-4
+  warmstart_ckpt: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/panoptic/checkpoints_token_full_v2/best.pth  # Start from closed-set best
 
 # ── Loss (paper-aligned: L = L_cls + L_mask + L_O + L_V) ──
 loss:
