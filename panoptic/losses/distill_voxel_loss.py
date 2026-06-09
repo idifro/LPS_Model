@@ -46,15 +46,16 @@ class VoxelDistillLoss(nn.Module):
             if clip_feats.norm(dim=1).mean() < 0.1:
                 continue
 
-            # Get mask probabilities at sampled voxel locations
+            # Get mask weights at sampled voxel locations.
+            # softmax over queries so each voxel's weight sums to 1 — the dominant
+            # query takes most of the weight instead of blending all queries equally.
             V = pred_masks.shape[1]
-            # Clamp indices to valid range
             indices = indices.clamp(0, V - 1)
-            mask_probs = pred_masks[b, indices, :].sigmoid()  # (4096, Q)
+            weights = pred_masks[b, indices, :].softmax(dim=-1)  # (4096, Q)
 
-            # Reconstruct per-voxel features: weighted sum of query embeddings
+            # Reconstruct per-voxel features: softmax-weighted sum of query embeddings
             # (4096, Q) @ (Q, 768) → (4096, 768)
-            voxel_feats = mask_probs @ pred_embed[b]  # (4096, 768)
+            voxel_feats = weights @ pred_embed[b]   # (4096, 768)
             voxel_feats = F.normalize(voxel_feats, dim=-1)
 
             # Filter out zero-norm targets (padding from samples with <4096 valid)

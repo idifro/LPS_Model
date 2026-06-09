@@ -48,6 +48,7 @@ token:
   temp_max: 5.0
   margin: 0.1
   weight: 1.0
+  restore_from_warm_start: false
 
 training:
   lr_decoder: 5.0e-5

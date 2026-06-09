@@ -56,8 +56,8 @@ distillation:
     warmup_epochs: 2
     loss_type: cosine
   L_V:
-    weight: 0.1
-    warmup_epochs: 5
+    weight: 0.5
+    warmup_epochs: 3
     loss_type: cosine
 
 training:

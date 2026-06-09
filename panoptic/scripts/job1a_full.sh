@@ -3,7 +3,7 @@
 #BSUB -q batch_a100
 #BSUB -n 8
 #BSUB -M 8192
-#BSUB -W 36:00
+#BSUB -W 48:00
 #BSUB -R "span[hosts=1]"
 #BSUB -gpu "num=1:mode=exclusive_process:mps=no"
 #BSUB -o panoptic/logs/job1a_full_%J.out

@@ -10,6 +10,7 @@ Usage:
         base_protos_path="panoptic/clip_prototypes/text_prototypes_vitl14_224.pt",
         negative_bank_path="panoptic/clip_prototypes/negative_bank_200.pt",
         multiprompt_path="panoptic/clip_prototypes/text_prototypes_vitl14_224_multiprompt.pt",
+        exclude_novel_from_denom=True,   # recommended: remove novel protos from denominator
     )
 """
 import numpy as np
@@ -31,6 +32,10 @@ class TokenLossC1(nn.Module):
         multiprompt_path: optional path to multi-prompt prototypes (16, 10, 768)
         learnable_temperature: whether temperature is learnable
         initial_temperature: initial temperature value (0.07 = CLIP default)
+        exclude_novel_from_denom: if True, novel class protos are removed from the
+            InfoNCE denominator entirely. This prevents the token loss from actively
+            pushing embeddings away from novel prototypes (the primary cause of
+            novel PQ=0 in the B12/N4 split).
     """
 
     def __init__(
@@ -43,11 +48,13 @@ class TokenLossC1(nn.Module):
         temp_max: float = 5.0,
         margin: float = 0.1,
         novel_ids: list = None,
+        exclude_novel_from_denom: bool = True,
     ):
         super().__init__()
 
         self.margin = margin
         self.temp_max = temp_max
+        self.exclude_novel_from_denom = exclude_novel_from_denom
 
         # Load base prototypes
         base_data = torch.load(base_protos_path, map_location="cpu")
@@ -58,13 +65,12 @@ class TokenLossC1(nn.Module):
         base_protos = F.normalize(base_protos.float(), dim=-1)
 
         # B12/N4: separate base training IDs from novel IDs
-        # novel_ids are included as soft negatives (in denominator only, never as targets)
         if novel_ids is None:
             novel_ids = [2, 5, 6, 15]  # bus, motorcycle, pedestrian, vegetation
         self.novel_ids = set(novel_ids)
         self.base_ids = [i for i in range(base_protos.shape[0]) if i not in self.novel_ids]
-        self.n_base_train = len(self.base_ids)  # 12 (classes used as targets)
-        self.n_base = base_protos.shape[0]  # 16 (all protos including novel)
+        self.n_base_train = len(self.base_ids)  # 12
+        self.n_base = base_protos.shape[0]      # 16
 
         # Load negative bank
         neg_data = torch.load(negative_bank_path, map_location="cpu")
@@ -74,11 +80,20 @@ class TokenLossC1(nn.Module):
             neg_protos = neg_data
         neg_protos = F.normalize(neg_protos.float(), dim=-1)
 
-        # Concatenate: [16 base (incl. novel as soft neg) ; 200 negatives] = 216 total
-        # Novel protos sit at their original indices (2,6,14,15) — never used as targets
-        all_protos = torch.cat([base_protos, neg_protos], dim=0)  # (216, 768)
+        if exclude_novel_from_denom:
+            # Build denominator from base-only protos + negative bank (212 total).
+            # Novel protos are absent — the token loss cannot push embeddings away from them.
+            base_only = base_protos[self.base_ids]          # (12, 768)
+            all_protos = torch.cat([base_only, neg_protos], dim=0)   # (212, 768)
+            # Remap: original class index (0-15) → compact index (0-11) in all_protos
+            self.label_remap = {orig: i for i, orig in enumerate(self.base_ids)}
+        else:
+            # Legacy: novel protos included as soft negatives (never targets)
+            all_protos = torch.cat([base_protos, neg_protos], dim=0)  # (216, 768)
+            self.label_remap = {i: i for i in self.base_ids}
+
         self.register_buffer("all_protos", all_protos)
-        self.n_total = all_protos.shape[0]  # 216
+        self.n_total = all_protos.shape[0]
 
         # Multi-prompt prototypes (optional, for T4)
         if multiprompt_path is not None:
@@ -94,10 +109,10 @@ class TokenLossC1(nn.Module):
             self.multiprompt_protos = None
             self.n_templates = 0
 
-        # Temperature — initialize at log(3.0) ≈ 1.1 so it starts BELOW temp_max
-        # and can learn freely. Old init log(1/0.07)=2.66 → exp=14.3 → clamped to max,
-        # which zeroed all gradients (stuck at ceiling).
-        log_temp = torch.tensor(np.log(3.0))
+        # Temperature — initialize at log(0.5) so it starts well below temp_max
+        # and can decay toward the 0.07 floor (CLIP default).
+        # log(3.0) was the old init; it wasted early epochs with near-zero gradient.
+        log_temp = torch.tensor(np.log(0.5))
         if learnable_temperature:
             self.log_temperature = nn.Parameter(log_temp)
         else:
@@ -105,31 +120,27 @@ class TokenLossC1(nn.Module):
 
     @property
     def temperature(self):
-        return self.log_temperature.exp().clamp(min=1.0, max=self.temp_max)
+        return self.log_temperature.exp().clamp(min=0.07, max=self.temp_max)
 
     def _get_protos_for_step(self):
         """Get prototype matrix for this step (with optional T4 multi-prompt).
 
-        If multiprompt is enabled, randomly samples one template per class
-        and replaces the base prototypes with that template's embedding.
+        Samples one template per BASE class and replaces the leading entries
+        of all_protos (which are always base-only regardless of exclude_novel_from_denom).
 
         Returns:
-            protos: (N_total, 768) where first n_base entries may vary per step
+            protos: (N_total, 768)
         """
         if self.multiprompt_protos is not None and self.training:
-            # Random template index per class
             template_idx = torch.randint(
-                0, self.n_templates, (self.n_base,),
+                0, self.n_templates, (self.n_base_train,),
                 device=self.all_protos.device
             )
-            # Gather: (16, 768) from (16, 10, 768)
-            sampled_base = self.multiprompt_protos[
-                torch.arange(self.n_base, device=self.all_protos.device),
-                template_idx
-            ]
-            # Replace base protos with sampled templates
+            # Gather only base class rows from multiprompt_protos (16, 10, 768)
+            base_ids_t = torch.tensor(self.base_ids, device=self.all_protos.device)
+            sampled_base = self.multiprompt_protos[base_ids_t, template_idx]  # (12, 768)
             protos = self.all_protos.clone()
-            protos[:self.n_base] = sampled_base
+            protos[:self.n_base_train] = sampled_base
             return protos
         return self.all_protos
 
@@ -145,7 +156,7 @@ class TokenLossC1(nn.Module):
             loss: scalar tensor
         """
         device = pred_embeds.device
-        protos = self._get_protos_for_step()  # (216, 768)
+        protos = self._get_protos_for_step()  # (212 or 216, 768)
 
         total_loss = torch.tensor(0.0, device=device, requires_grad=True)
         n_valid = 0
@@ -154,18 +165,14 @@ class TokenLossC1(nn.Module):
             if len(pred_idx) == 0:
                 continue
 
-            # Get matched query embeddings
             matched_embeds = pred_embeds[b, pred_idx]  # (M, 768)
 
-            # Get GT class labels for matched queries
-            # Support both dict-of-lists format {"classes": [tensor, ...]}
-            # and list-of-dicts format [{"labels": tensor}, ...]
             if isinstance(targets, dict) and "classes" in targets:
                 gt_classes = targets["classes"][b][gt_idx]
             else:
                 gt_classes = targets[b]["labels"][gt_idx]  # (M,)
 
-            # Filter out no-object class AND novel classes (not supervised)
+            # Filter: keep only base-class matches (novel classes are not supervised)
             valid = torch.tensor(
                 [(c.item() < self.n_base and c.item() not in self.novel_ids)
                  for c in gt_classes],
@@ -174,21 +181,22 @@ class TokenLossC1(nn.Module):
             if valid.sum() == 0:
                 continue
 
-            matched_embeds = matched_embeds[valid]  # (M', 768)
-            gt_classes = gt_classes[valid]  # (M',) indices from base_ids only
+            matched_embeds = matched_embeds[valid]       # (M', 768)
+            gt_classes     = gt_classes[valid]           # (M',) original 0-15 indices
 
-            # Cosine similarities to all 216 concepts
-            sim = matched_embeds @ protos.T  # (M', 216)
+            # Remap GT labels to compact indices into all_protos
+            gt_remapped = torch.tensor(
+                [self.label_remap[c.item()] for c in gt_classes],
+                dtype=torch.long, device=device
+            )                                            # (M',) indices 0-11
 
-            # Margin penalty: subtract margin from GT class similarity
-            # This forces the model to achieve margin > self.margin for correct classification
+            sim = matched_embeds @ protos.T              # (M', 212 or 216)
+
             sim_margin = sim.clone()
-            sim_margin[torch.arange(len(gt_classes), device=device), gt_classes] -= self.margin
+            sim_margin[torch.arange(len(gt_remapped), device=device), gt_remapped] -= self.margin
+            sim_margin = sim_margin / self.temperature
 
-            sim_margin = sim_margin / self.temperature  # scale by learned temperature
-
-            # Cross-entropy: GT labels index into their original positions (0-15)
-            loss_b = F.cross_entropy(sim_margin, gt_classes)
+            loss_b = F.cross_entropy(sim_margin, gt_remapped)
 
             if torch.isfinite(loss_b):
                 total_loss = total_loss + loss_b

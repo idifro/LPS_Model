@@ -387,16 +387,24 @@ def main():
 
     # ── Warm-start ──
     warm_start = get_nested(cfg, "warm_start.checkpoint")
+    warm_start_ckpt = None
     if warm_start and os.path.exists(warm_start):
         print(f"Warm-starting from {warm_start}")
-        ckpt = torch.load(warm_start, map_location="cpu")
-        state = ckpt.get("decoder", ckpt.get("model", ckpt))
+        warm_start_ckpt = torch.load(warm_start, map_location="cpu")
+
+        # Load decoder state
+        state = warm_start_ckpt.get("decoder", warm_start_ckpt.get("model", warm_start_ckpt))
         # strict=False: allows missing clip_embed_head / objectness_head keys
         missing, unexpected = decoder.load_state_dict(state, strict=False)
         if missing:
             print(f"  Missing keys (expected for new heads): {len(missing)}")
         if unexpected:
             print(f"  Unexpected keys: {len(unexpected)}")
+
+        # Load LoRA adapters if available
+        if lora_adapters is not None and "lora_state" in warm_start_ckpt:
+            lora_adapters.load_state_dict(warm_start_ckpt["lora_state"], strict=False)
+            print(f"  LoRA adapters restored ({sum(p.numel() for p in lora_adapters.parameters())} params)")
 
     # ── Losses ──
     # Panoptic loss (mask + dice + CE)
@@ -427,9 +435,24 @@ def main():
             learnable_temperature=get_nested(cfg, "token.learnable_temperature", True),
             temp_max=get_nested(cfg, "token.temp_max", 5.0),
             margin=get_nested(cfg, "token.margin", 0.1),
+            exclude_novel_from_denom=get_nested(cfg, "token.exclude_novel_from_denom", True),
         ).to(device)
 
-    # ── Distillation losses (Job 1b: L_O + L_V) ──
+        # Restore token_criterion from warm-start checkpoint if available
+        if warm_start_ckpt is not None and "token_criterion" in warm_start_ckpt:
+            if get_nested(cfg, "token.restore_from_warm_start", True):
+                token_criterion.load_state_dict(warm_start_ckpt["token_criterion"])
+                temp_val = token_criterion.temperature.item()
+                print(f"  Token criterion restored (temperature={temp_val:.4f})")
+            else:
+                print(f"  Token criterion NOT restored from warm-start (token.restore_from_warm_start=false)")
+                print(f"  Temperature initialized at {token_criterion.temperature.item():.4f}")
+
+    if token_criterion is not None:
+        print(f"  Token loss active — temperature={token_criterion.temperature.item():.4f}, "
+              f"n_total={token_criterion.n_total}, n_base_train={token_criterion.n_base_train}")
+
+
     distill_obj_loss = None
     distill_vox_loss = None
     if get_nested(cfg, "distillation.enabled", False):
@@ -586,13 +609,23 @@ def main():
                 loss_dice_val = panoptic_losses.get("loss_dice", torch.tensor(0.0)).item()
 
                 # Objectness loss (single_clip mode)
+                # Trained class-agnostically on ALL GT masks (base + novel) so that
+                # novel-attending queries are not forced to have objectness=0.
                 loss_obj_val = 0.0
                 if head_type == "single_clip" and "pred_obj" in outputs:
                     obj_scores = outputs["pred_obj"][0].squeeze(-1)  # (Q,)
                     obj_target = torch.zeros_like(obj_scores)
-                    pred_idx = indices[0][0]
-                    if len(pred_idx) > 0:
-                        obj_target[pred_idx] = 1.0
+
+                    # Run matcher over full GT (base + novel) for objectness only
+                    all_targets_obj = {
+                        "classes": [gt_classes_all],
+                        "masks":   [gt_masks_all.float()],
+                    }
+                    _, indices_all = criterion(outputs, all_targets_obj)
+                    pred_idx_all = indices_all[0][0]
+                    if len(pred_idx_all) > 0:
+                        obj_target[pred_idx_all] = 1.0
+
                     loss_obj = F.binary_cross_entropy_with_logits(obj_scores, obj_target)
                     loss_obj_val = loss_obj.item()
                     total_loss = total_loss + get_nested(cfg, "loss.weight_obj", 2.0) * loss_obj
@@ -669,7 +702,7 @@ def main():
                       f"mask={loss_mask_val:.3f} dice={loss_dice_val:.3f} "
                       f"obj={loss_obj_val:.3f} token={loss_token_val:.3f} "
                       f"lo={loss_lo_val:.3f} lv={loss_lv_val:.3f} "
-                      f"lora_gnorm={lora_gnorm:.4e} phase={'1' if is_phase1 else '2'}")
+                      f"temp={temp_val:.3f} lora_gnorm={lora_gnorm:.4e} phase={'1' if is_phase1 else '2'}")
 
                 if use_wandb:
                     wandb.log({
