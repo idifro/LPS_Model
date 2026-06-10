@@ -73,5 +73,5 @@ logging:
   wandb_run_name: job1a-lora-c1-a4
 
 checkpoint:
-  save_dir: panoptic/checkpoints_job1a
+  save_dir: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/panoptic/checkpoints_job1a_v1
   save_every: 1

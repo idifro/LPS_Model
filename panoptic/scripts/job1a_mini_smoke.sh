@@ -6,8 +6,8 @@
 #BSUB -W 02:00
 #BSUB -R "span[hosts=1]"
 #BSUB -gpu "num=1:mode=exclusive_process:mps=no"
-#BSUB -o panoptic/logs/job1a_mini_%J.out
-#BSUB -e panoptic/logs/job1a_mini_%J.err
+#BSUB -o /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/panoptic/logs/job1a_mini_%J.out
+#BSUB -e /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/panoptic/logs/job1a_mini_%J.err
 
 # Job 1a Mini Smoke Test (3 epochs on v1.0-mini)
 # Gate: no NaN, loss decreasing, LoRA grad norms in [1e-4, 10]
