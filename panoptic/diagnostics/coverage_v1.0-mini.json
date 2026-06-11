@@ -1,0 +1,204 @@
+{
+  "version": "v1.0-mini",
+  "gates": {
+    "min_valid_pct": 60.0,
+    "max_confused_pct": 30.0,
+    "min_margin": 0.05
+  },
+  "novel": {
+    "2": {
+      "name": "bus",
+      "total_gt": 220,
+      "valid": 220,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.1834,
+      "avg_margin": -0.0782,
+      "conf_base_pct": 100.0,
+      "conf_novel_pct": 0.0,
+      "conf_total_pct": 100.0
+    },
+    "5": {
+      "name": "motorcycle",
+      "total_gt": 108,
+      "valid": 108,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.127,
+      "avg_margin": -0.0989,
+      "conf_base_pct": 98.15,
+      "conf_novel_pct": 1.85,
+      "conf_total_pct": 100.0
+    },
+    "6": {
+      "name": "pedestrian",
+      "total_gt": 2811,
+      "valid": 2811,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.1858,
+      "avg_margin": -0.0457,
+      "conf_base_pct": 98.75,
+      "conf_novel_pct": 0.53,
+      "conf_total_pct": 99.29
+    },
+    "15": {
+      "name": "vegetation",
+      "total_gt": 317,
+      "valid": 317,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.2126,
+      "avg_margin": -0.0499,
+      "conf_base_pct": 100.0,
+      "conf_novel_pct": 0.0,
+      "conf_total_pct": 100.0
+    }
+  },
+  "base": {
+    "0": {
+      "name": "barrier",
+      "total_gt": 1733,
+      "valid": 1733,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.1887,
+      "avg_margin": -0.0442,
+      "conf_base_pct": 97.46,
+      "conf_novel_pct": 1.85,
+      "conf_total_pct": 99.31
+    },
+    "1": {
+      "name": "bicycle",
+      "total_gt": 141,
+      "valid": 141,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.132,
+      "avg_margin": -0.0916,
+      "conf_base_pct": 93.62,
+      "conf_novel_pct": 6.38,
+      "conf_total_pct": 100.0
+    },
+    "3": {
+      "name": "car",
+      "total_gt": 3134,
+      "valid": 3134,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.195,
+      "avg_margin": -0.0453,
+      "conf_base_pct": 94.61,
+      "conf_novel_pct": 4.02,
+      "conf_total_pct": 98.63
+    },
+    "4": {
+      "name": "construction vehicle",
+      "total_gt": 137,
+      "valid": 137,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.1838,
+      "avg_margin": -0.0735,
+      "conf_base_pct": 100.0,
+      "conf_novel_pct": 0.0,
+      "conf_total_pct": 100.0
+    },
+    "7": {
+      "name": "traffic cone",
+      "total_gt": 750,
+      "valid": 735,
+      "valid_pct": 98.0,
+      "avg_sim_own": 0.068,
+      "avg_margin": -0.1293,
+      "conf_base_pct": 99.18,
+      "conf_novel_pct": 0.68,
+      "conf_total_pct": 99.86
+    },
+    "8": {
+      "name": "trailer",
+      "total_gt": 50,
+      "valid": 50,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.2023,
+      "avg_margin": -0.0708,
+      "conf_base_pct": 100.0,
+      "conf_novel_pct": 0.0,
+      "conf_total_pct": 100.0
+    },
+    "9": {
+      "name": "truck",
+      "total_gt": 364,
+      "valid": 364,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.1972,
+      "avg_margin": -0.0586,
+      "conf_base_pct": 96.7,
+      "conf_novel_pct": 3.02,
+      "conf_total_pct": 99.73
+    },
+    "10": {
+      "name": "driveable surface",
+      "total_gt": 323,
+      "valid": 323,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.2526,
+      "avg_margin": -0.0143,
+      "conf_base_pct": 100.0,
+      "conf_novel_pct": 0.0,
+      "conf_total_pct": 100.0
+    },
+    "11": {
+      "name": "other flat",
+      "total_gt": 192,
+      "valid": 192,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.2227,
+      "avg_margin": -0.0323,
+      "conf_base_pct": 97.92,
+      "conf_novel_pct": 1.56,
+      "conf_total_pct": 99.48
+    },
+    "12": {
+      "name": "sidewalk",
+      "total_gt": 323,
+      "valid": 323,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.2272,
+      "avg_margin": -0.0345,
+      "conf_base_pct": 100.0,
+      "conf_novel_pct": 0.0,
+      "conf_total_pct": 100.0
+    },
+    "13": {
+      "name": "terrain",
+      "total_gt": 282,
+      "valid": 282,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.226,
+      "avg_margin": -0.0371,
+      "conf_base_pct": 100.0,
+      "conf_novel_pct": 0.0,
+      "conf_total_pct": 100.0
+    },
+    "14": {
+      "name": "manmade",
+      "total_gt": 323,
+      "valid": 323,
+      "valid_pct": 100.0,
+      "avg_sim_own": 0.2663,
+      "avg_margin": 0.0177,
+      "conf_base_pct": 0.93,
+      "conf_novel_pct": 0.0,
+      "conf_total_pct": 0.93
+    }
+  },
+  "warnings": [
+    "bus: margin_to_base=-0.0782 < 0 (base wins on average)",
+    "bus: Confused%=100.0% > 30%",
+    "motorcycle: margin_to_base=-0.0989 < 0 (base wins on average)",
+    "motorcycle: Confused%=100.0% > 30%",
+    "pedestrian: margin_to_base=-0.0457 < 0 (base wins on average)",
+    "pedestrian: Confused%=99.3% > 30%",
+    "vegetation: margin_to_base=-0.0499 < 0 (base wins on average)",
+    "vegetation: Confused%=100.0% > 30%"
+  ],
+  "vox_coverage": {
+    "frac_mean": 0.8035962144022274,
+    "frac_median": 0.8023994354269584,
+    "n_samples": 323,
+    "legacy_files": 0
+  }
+}

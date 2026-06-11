@@ -20,7 +20,7 @@ Usage:
     python panoptic/scripts/precompute_clip_voxel_features.py \
         --dataroot /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes \
         --version v1.0-trainval \
-        --output_dir /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/clip_features \
+        --output_dir /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/clip_features_v1_diag \
         --device cuda
 """
 import argparse
@@ -321,26 +321,25 @@ def process_sample(nusc, sample_token, dataroot, extractor, device):
     n_valid = int(valid_voxels.sum())
 
     # 4. Object-level: mask-pool per GT instance
+    # Save ALL GT instances in original order with obj_valid flag.
+    # Instances with no camera-visible voxels get zero-norm feat + valid=False.
+    # This lets Script A compute true coverage = valid.sum() / len(gt_instances).
     gt_instances = build_gt_masks(sem, inst, inv_idx, V)
-    obj_feats_list = []
-    obj_classes_list = []
+    n_inst = len(gt_instances)
 
-    for mask, cls_id in gt_instances:
-        # Pool CLIP features over valid voxels in this mask
+    obj_feats   = np.zeros((n_inst, 768), dtype=np.float16)
+    obj_classes = np.zeros(n_inst,        dtype=np.int32)
+    obj_valid   = np.zeros(n_inst,        dtype=np.bool_)
+
+    for k, (mask, cls_id) in enumerate(gt_instances):
+        obj_classes[k] = cls_id
         mask_valid = mask & valid_voxels
         if mask_valid.sum() < 1:
             continue
         pooled = voxel_feats_accum[mask_valid].mean(axis=0)
         pooled = pooled / max(np.linalg.norm(pooled), 1e-8)
-        obj_feats_list.append(pooled)
-        obj_classes_list.append(cls_id)
-
-    if obj_feats_list:
-        obj_feats = np.stack(obj_feats_list).astype(np.float16)
-        obj_classes = np.array(obj_classes_list, dtype=np.int32)
-    else:
-        obj_feats = np.zeros((0, 768), dtype=np.float16)
-        obj_classes = np.array([], dtype=np.int32)
+        obj_feats[k]  = pooled.astype(np.float16)
+        obj_valid[k]  = True
 
     # 5. Voxel-level: sample 4096 valid voxels
     valid_indices = np.where(valid_voxels)[0]
@@ -356,11 +355,13 @@ def process_sample(nusc, sample_token, dataroot, extractor, device):
     vox_indices = sampled.astype(np.int32)
 
     return {
-        "obj_feats": obj_feats,
+        "obj_feats":   obj_feats,
         "obj_classes": obj_classes,
-        "vox_feats": vox_feats,
+        "obj_valid":   obj_valid,
+        "vox_feats":   vox_feats,
         "vox_indices": vox_indices,
-        "n_valid": n_valid,
+        "n_valid":     n_valid,
+        "n_voxels":    np.int32(V),
     }
 
 
@@ -368,7 +369,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataroot", default="/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes")
     parser.add_argument("--version", default="v1.0-trainval")
-    parser.add_argument("--output_dir", default="/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/clip_features")
+    parser.add_argument("--output_dir", default="/fs/scratch/SX_ETL3_GenAI_Team/mha2cob/clip_features_v1_diag")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--split", default="train", help="train or val or both")
     parser.add_argument("--batch_size", type=int, default=32)

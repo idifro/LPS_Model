@@ -608,6 +608,14 @@ def main():
                 loss_mask_val = panoptic_losses.get("loss_mask", torch.tensor(0.0)).item()
                 loss_dice_val = panoptic_losses.get("loss_dice", torch.tensor(0.0)).item()
 
+                # All-GT matcher (base + novel) — reused by objectness and L_O.
+                # Computing once here avoids a duplicate criterion() call.
+                all_targets_obj = {
+                    "classes": [gt_classes_all],
+                    "masks":   [gt_masks_all.float()],
+                }
+                _, indices_all = criterion(outputs, all_targets_obj)
+
                 # Objectness loss (single_clip mode)
                 # Trained class-agnostically on ALL GT masks (base + novel) so that
                 # novel-attending queries are not forced to have objectness=0.
@@ -616,12 +624,6 @@ def main():
                     obj_scores = outputs["pred_obj"][0].squeeze(-1)  # (Q,)
                     obj_target = torch.zeros_like(obj_scores)
 
-                    # Run matcher over full GT (base + novel) for objectness only
-                    all_targets_obj = {
-                        "classes": [gt_classes_all],
-                        "masks":   [gt_masks_all.float()],
-                    }
-                    _, indices_all = criterion(outputs, all_targets_obj)
                     pred_idx_all = indices_all[0][0]
                     if len(pred_idx_all) > 0:
                         obj_target[pred_idx_all] = 1.0
@@ -648,8 +650,10 @@ def main():
 
                     w_lo = get_loss_weight("L_O", epoch, cfg)
                     if w_lo > 0 and obj_clip.shape[1] > 0:
+                        # Use all-GT indices so novel-matched queries also get L_O supervision
                         loss_lo = distill_obj_loss(
-                            outputs["pred_embed"], obj_clip, obj_cls, indices, targets
+                            outputs["pred_embed"], obj_clip, obj_cls,
+                            indices_all, all_targets_obj
                         )
                         loss_lo_val = loss_lo.item()
                         total_loss = total_loss + w_lo * loss_lo
