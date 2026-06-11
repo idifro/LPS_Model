@@ -144,19 +144,29 @@ New: decoder_output → MLP(256→512→512→768) → L2-norm → CLIP embeddin
 ### 3.4 Camera CLIP Feature Infrastructure
 
 **Model:** CLIP ViT-L/14@224 (OpenAI `clip` package) — same embedding space as text prototypes
-**Extraction:** Strategy B — Dense single-scale with 50% overlap (stride=112, tile=224)
-- Each 1600×900 camera image → ~84 overlapping 224×224 tiles
-- Each tile → CLIP patch tokens (256 patches, 768-d each)
-- Tiles stitched with 2-4× overlap averaging → smoother, higher-quality features
-- 6 cameras × 84 tiles = ~504 CLIP forward passes per sample
+**v1 extraction (current):** Strategy B — Dense single-scale with 50% overlap (stride=112, tile=224)
+- Each 1600×900 camera image → ~84 overlapping 224×224 tiles → patch tokens (256 per tile, 768-d)
+- Tiles stitched with 2-4× overlap averaging → dense feature map at patch resolution (14px/patch)
+- Patch tokens averaged over all voxel projections per GT instance → `obj_feats`
 
-**Precomputed output:** `{sample_token}.npz` per sample containing:
-- `obj_feats`: (N_inst, 768) float16 — mask-pooled CLIP per GT instance (for L_O)
-- `vox_feats`: (4096, 768) float16 — randomly sampled voxel CLIP features (for L_V)
+**v1 known issue (Script A diagnostics):**
+- `obj_feats` sim_own = 0.12–0.26 for ALL classes (very low)
+- margin_to_base < 0 for all classes except manmade — the teacher signal points to the WRONG class
+- Root cause: patch tokens represent local image texture, not object-level semantics. Averaging patch tokens from a multi-tile full-image extraction over voxel projections gives a noisy feature with no class-discriminative signal.
+- This invalidates L_O v1 as a training signal.
+
+**v2 planned (feature branch):** Object-crop CLS encoding. See Section 9.
+
+**v1 precomputed output** `{sample_token}.npz` per sample:
+- `obj_feats`: (N_gt, 768) float16 — patch-pooled CLIP per GT instance (all instances, zero if invisible)
+- `obj_classes`: (N_gt,) int32 — GT class per instance (original GT order)
+- `obj_valid`: (N_gt,) bool — True if instance has ≥1 camera-visible voxel
+- `obj_num_views`, `obj_num_points`: metadata (v2 only)
+- `vox_feats`: (4096, 768) float16 — randomly sampled voxel CLIP features (patch-pooled)
 - `vox_indices`: (4096,) int32 — voxel indices into point cloud
-- Total storage: **186 GB** (fp16) for trainval
-
-**At training time:** Load precomputed features per sample, project to matched queries (L_O) or selected voxels (L_V).
+- `n_valid`: int — total voxels with valid camera projection
+- `n_voxels`: int — total voxels V (for computing coverage fraction)
+- Storage: **186 GB** (v1 trainval), **~170 GB** at `/fs/scratch/.../clip_features/`
 
 ---
 
@@ -170,33 +180,40 @@ New: decoder_output → MLP(256→512→512→768) → L2-norm → CLIP embeddin
 | L_dice | 5.0 | Mask overlap quality |
 | L_obj (BCE) | 2.0 | Objectness: matched=1, unmatched=0 |
 
-### 4.2 L5/C1: Token Contrastive with 216+ Negatives (v2)
+### 4.2 L5/C1: Token Contrastive with 212+ Negatives (v2)
 
 **Problem solved:** The old 16-class InfoNCE denominator caused closed-set collapse — the token head learned 16 narrow tunnels in CLIP space, making novel-class detection impossible.
 
-**Fix:** Expand denominator to 216+ concepts:
-- 16 class prototypes (all 16 in denominator as soft negatives; only 12 base used as targets)
-- 200 negatives: driving confusors (van, SUV, pickup), infrastructure (fire hydrant, bollard), generic objects
+**Fix:** Expand denominator to 212+ concepts:
+- 12 base class prototypes (training targets only)
+- 188 negatives from `negative_bank_200.pt` (file is misnamed — actual count is 188): driving confusors, infrastructure, generic objects
+- Total denominator: 200 entries (12 base + 188 neg) in `exclude_novel_from_denom=True` mode
+- Novel class protos are excluded from the denominator entirely — the loss cannot push embeddings away from novel prototypes
 
 **v2 improvements (post Job 1a analysis):**
-- **Temperature clamp:** `min=1.0, max=5.0` — prevents saturation at 14+ where gradients vanish
+- **Temperature clamp:** `min=0.07, max=5.0` — CLIP default floor (0.07), prevents saturation above 5.0
+- **Temperature init:** `log(0.5)` → T=0.5 at epoch 0. Previous `log(3.0)` started at T=3.0; previous `log(1/0.07)=14.3` was above clamp and produced zero gradient for early epochs
 - **Margin penalty (0.1):** Subtracts margin from GT similarity before softmax: `logits[gt] -= margin`. Forces minimum cosine separation > margin between GT and confusers
-- **Soft negatives:** Novel protos (bus, pedestrian, manmade, vegetation) remain in denominator but are never targets. Pushes embeddings away from novel clusters without rewarding them
+- **`exclude_novel_from_denom=True`:** Novel protos (bus, motorcycle, pedestrian, vegetation) removed from denominator. Prevents the C1 loss from actively suppressing novel-class embeddings
 
-**Temperature:** Learnable, initialized at 1/0.07 ≈ 14.3, clamped to [1.0, 5.0]. Expected to converge to ~3-5 range for optimal discrimination.
+**Temperature:** Learnable, initialized at 0.5, clamped to [0.07, 5.0].
 
 ### 4.3 L_O: Object-Level Camera CLIP Distillation
 
 **Intuition:** Each matched decoder query represents one object/stuff segment. Its CLIP embedding should match what CLIP sees for that object in the camera images.
 
-**Computation:**
-1. For each matched (query, GT mask) pair
-2. Soft-pool camera CLIP features within the predicted mask: `w_q = softmax(mask) @ fv_clip`
-3. Loss = `1 - cos_sim(pred_embed_q, w_q)`
+**v1 implementation (patch-pooled, current but flawed):**
+1. For each matched (query, GT mask) pair from `indices_all` (all-GT Hungarian matcher)
+2. Pool precomputed patch-token CLIP features within the GT voxel mask: `target = mean(vox_feats[mask_valid])`
+3. Loss = `1 - cos_sim(pred_embed_q, target)`
 
-**Why it works:** Forces the decoder to produce CLIP-aligned query embeddings that reflect what the actual CLIP model sees for each object. This is the standard 3D2D distillation approach at the object level.
+**v1 known issue (confirmed by Script A diagnostics):** Patch-token features averaged over voxel projections have sim_own=0.12–0.26 and negative margin_to_base for ALL classes. The teacher signal itself points to the wrong class. This means L_O v1 teaches the model in the wrong direction.
 
-**Applied to:** Matched queries only (unmatched → noisy random pooling).
+**Bug fix applied (Session 2):** L_O previously called with `indices, targets` (base-filtered Hungarian match) — novel GT instances were never accessed. Fixed to use `indices_all, all_targets_obj` so novel-matched queries receive CLIP distillation supervision.
+
+**v2 planned (feature branch):** Replace patch-pooled pooling with object-crop CLS encoding. See Section 9.
+
+**Applied to:** All matched queries via `indices_all` (base + novel). Unmatched → no supervision.
 **Warmup:** 0→1.0 over 2 epochs (phase 2 only).
 
 ### 4.4 L_V: Voxel-Level Camera CLIP Distillation
@@ -291,10 +308,10 @@ Each job warm-starts from the previous job's best checkpoint.
 
 ### 5.4 B12/N4 Class Split
 
-**Base 12 (training classes):** barrier, bicycle, car, construction_vehicle, motorcycle, traffic_cone, trailer, truck, driveable_surface, other_flat, sidewalk, terrain
-**Novel 4 (held-out, CLIP-only at inference):** bus(2), pedestrian(6), vegetation(15), manmade(14)
+**Base 12 (training classes):** barrier(0), bicycle(1), car(3), construction_vehicle(4), traffic_cone(7), trailer(8), truck(9), driveable_surface(10), other_flat(11), sidewalk(12), terrain(13), manmade(14)
+**Novel 4 (held-out, CLIP-only at inference):** bus(2), motorcycle(5), pedestrian(6), vegetation(15)
 
-**Critical:** Novel class GT masks are **excluded** from all losses (mask, dice, token). Novel text protos remain in the C1 denominator as soft negatives. PQ_novel can only improve through genuine CLIP-space generalization.
+**Critical:** Novel class GT masks are **excluded** from all losses (mask, dice, token C1, L_O). Novel text protos are removed from the C1 denominator entirely (`exclude_novel_from_denom=True`). PQ_novel can only improve through genuine CLIP-space generalization via L_O/L_V distillation (camera CLIP features see novel objects and provide indirect supervision).
 
 ---
 
@@ -302,13 +319,17 @@ Each job warm-starts from the previous job's best checkpoint.
 
 | Issue | Root Cause | Fix |
 |---|---|---|
-| Temperature stuck at 14.3 (clamped to 5.0) | Init at log(1/0.07)=2.66 → exp=14.3, above clamp, zero gradient | Init at log(3.0)=1.1 → exp=3.0, inside clamp range |
+| Temperature init at 14.3, zero gradient for entire run | Init at log(1/0.07)=2.66 → exp=14.3, above clamp max=5.0, zero gradient | Init at log(0.5) → exp=0.5, clamp [0.07, 5.0]; temperature can now move freely |
+| Temperature clamp floor too high | clamp(min=1.0) prevented temperature from reaching CLIP-native 0.07 | Changed to clamp(min=0.07) — allows full range down to CLIP default |
 | LoRA gnorm = 914K (appeared unstable) | Read AMP-scaled gradients before unscale | Moved computation after `scaler.unscale_()`. True norm ~0.2 |
-| PQ_novel=0.47 at epoch 1 (impossibly high) | Novel classes had full mask/dice supervision | Filter NOVEL_IDS_TRAIN={2,6,14,15} from targets |
-| Voxel margin = -0.03 after Job 1a v1 | Temperature saturation → no gradient pressure for margins | Margin penalty (0.1) + temp clamp [1,5] + soft negatives |
-| Two independent temperatures (train vs inference) | decoder.clip_embed_head.temperature trained by nothing | Inference now uses token_criterion.temperature |
+| PQ_novel=0.47 at epoch 1 (impossibly high) | Novel classes had full mask/dice supervision | Filter NOVEL_IDS={2,5,6,15} from targets in all losses |
+| L_O only supervised base-matched queries, novel never received CLIP distillation | L_O called with `indices, targets` (base-filtered matcher). Novel instances not in GT list → skipped entirely | Hoisted `all_targets_obj`/`indices_all` (all-GT matcher); L_O now uses `indices_all` so novel-matched queries receive camera CLIP distillation |
+| Novel IDs wrong in docs (manmade listed as novel, motorcycle as base) | Documentation error | Novel = {bus(2), motorcycle(5), pedestrian(6), vegetation(15)}; manmade(14) is BASE |
+| Voxel margin = -0.03 after Job 1a v1 | Temperature saturation → no gradient pressure for margins | Margin penalty (0.1) + temp clamp [0.07, 5.0] |
+| Two independent temperatures (train vs inference) | decoder.clip_embed_head.temperature trained by nothing | Inference uses token_criterion.temperature |
 | LayerNorm in LoRA adapter | Re-scaled features at epoch 0, breaking warm-start | Removed entirely — just feats + delta |
 | Matcher KeyError in single_clip mode | aux_outputs lack pred_logits | Skip class cost when cost_class=0 |
+| L_O v1 teacher signal misaligned (Script A finding) | patch-pooled features have negative margin for ALL classes — teacher points to wrong class | v2: replace with object-crop CLS encoding (feature branch) |
 
 ---
 
@@ -347,34 +368,188 @@ Text protos are single-point summaries ("a car in a scene"). Camera CLIP feature
 
 ## 8. Current Progress and Results
 
-### 8.1 Job 1a v2 (In Progress)
+### 8.1 Job 1a v2 (Running — full trainval, 20 epochs)
 
-**Status:** Running on full trainval, 20 epochs
+**Status:** Running on full trainval
 **Warm-start:** Closed-set best checkpoint (PQ=0.476)
-**Key changes from v1:** Margin penalty, soft negatives, temperature init fix
+**Key changes from v1:** Temperature init log(0.5), clamp [0.07, 5.0], margin=0.1, `exclude_novel_from_denom=True`, `restore_from_warm_start=False`
 
-Mini smoke test results (3 epochs, 404 samples):
-```
-Epoch 0: loss=90→52, lora_gnorm=0.2, token_loss=4.0
-Epoch 2: PQ_base=0.10, PQ_novel=0.00, token_loss=3.8
-Zero-shot: ambulance=7.3%, police_van=12.2%, trash_can=0%, fire_hydrant=0%
-```
+Early epoch results (confirmed good direction):
+- Epoch 1: PQ_base=0.306 (exceeds prior job1b v1 best of 0.276 at epoch 13)
+- Temperature starts at 0.5 and decreasing (correct)
+- loss_token started at 5.36, went to ~4.6 range (correct convergence)
 
-### 8.2 Precompute (Complete)
+### 8.2 Precompute v1 (Complete — 170GB)
 
-**Status:** ✅ Done — 34,149 npz files, 186 GB, all verified
-**Strategy:** Dense single-scale, stride=112, 50% overlap, fp16
+**Status:** ✅ Done — ~34,000 npz files, ~170 GB at `/fs/scratch/.../clip_features/v1.0-trainval/`
+**Strategy:** Dense single-scale patch-pooled (v1)
+**Issue found:** Teacher signal is misaligned (see Section 9 — Script A findings)
+**Action:** Do not recompute trainval. Run precompute v2 (crop-CLS) on mini first for validation; recompute full trainval only after mini gates pass.
 
-### 8.3 Expected Full Trainval Results
+### 8.3 Job 1b (Pending — waiting for job1a to finish)
 
-| Metric | Job 1a (expected) | Job 1b (expected) | Job 1c (expected) |
+**Plan:** Warm-start from job1a best, 15 epochs, L_O=1.0, L_V=0.0 (first ablation with fixed crop-CLS teacher)
+
+---
+
+## 9. Diagnostic Findings (Script A + Script B)
+
+Run on `v1.0-mini` (323 samples) with v1 precomputed features.
+
+### 9.1 Script A: Camera CLIP Coverage Audit
+
+| Class | Valid% | sim_own | margin_to_base | Conf-base% |
+|---|---|---|---|---|
+| bus (novel) | 100% | 0.183 | **-0.078** | 100% |
+| motorcycle (novel) | 100% | 0.127 | **-0.099** | 98% |
+| pedestrian (novel) | 100% | 0.186 | **-0.046** | 99% |
+| vegetation (novel) | 100% | 0.213 | **-0.050** | 100% |
+| manmade (base) | 100% | 0.266 | **+0.018** | 1% |
+
+**Coverage (Valid%) is not the problem** — 100% valid, 80% voxel projection rate.
+
+**Teacher signal quality IS the problem.** Every novel class (and most base classes) has negative margin_to_base. The patch-pooled obj_feats point to the wrong class when argmax'd against text prototypes. Using these as L_O targets teaches the model to produce embeddings misaligned with text prototypes. Manmade is the single exception (+0.018) because its text prototype has the highest similarity to generic visual textures captured by patch pooling.
+
+### 9.2 Script B: Prototype Similarity Analysis
+
+| Novel class | Nearest base | Proto-proto sim | Margin |
 |---|---|---|---|
-| PQ_all | 0.35-0.45 | 0.40-0.50 | 0.45-0.55 |
-| PQ_base | 0.40-0.48 | 0.45-0.52 | 0.45-0.52 |
-| PQ_novel | 0.00 | 0.00-0.10 | 0.10-0.25 |
-| SQ | 0.55-0.65 | 0.65-0.75 | 0.65-0.75 |
-| Voxel margin | >0.05 | >0.08 | >0.12 |
-| Temperature | 3.0-5.0 | 3.0-5.0 | 3.0-5.0 |
+| motorcycle | bicycle | 0.9125 | **0.0875** ← FRAGILE |
+| vegetation | terrain | 0.8759 | **0.1241** ← FRAGILE |
+| bus | truck | 0.8644 | **0.1356** ← FRAGILE |
+| pedestrian | sidewalk | 0.8168 | 0.1832 (moderate) |
+
+**All 4 novel classes have HIGH neg-bank training geometry risk** (sim > 0.85 to neg-bank entries):
+- bus → "school bus" 0.926, motorcycle → "motorcycle rider" 0.914
+- pedestrian → "person standing" 0.872, vegetation → "shrub" 0.895
+
+Note: base classes also contaminated (truck → "pickup truck" 0.940). The neg-bank was built without filtering sub-types of any class.
+
+### 9.3 Priority of Fixes
+
+| Problem | Severity | Fix |
+|---|---|---|
+| Patch-pooled teacher signal has negative margin | **Critical** — L_O teaches wrong direction | Replace with crop-CLS (feature branch) |
+| Prototype margins fragile (motorcycle 0.087) | High — even perfect embeddings may classify wrong | Multi-prompt re-engineering |
+| Neg-bank contains sub-types of all 16 classes | Medium — distorts C1 training geometry | Rebuild with sim < 0.75 filter |
+
+---
+
+## 10. Feature Branch Plan: v2 Teacher Signal + Neg-Bank + Prompts
+
+### 10.1 L_O v2: Object-Crop CLS Encoding
+
+For each GT instance, compute CLIP feature from image crop (not from patch grid):
+
+**Thing instances (ids 1–10):**
+1. Project GT voxels to each camera via `project_lidar_to_camera()`
+2. Compute 2D bbox from projected points (require ≥5 pts)
+3. Expand bbox 1.3×, make square by padding
+4. Resize to 224×224 (no CenterCrop — preserve full object)
+5. Encode with `model.encode_image()` → CLS token (768-d)
+6. Weight by `n_projected_points` across cameras
+7. Average, L2-normalize → `obj_feats[k]`
+
+**Stuff instances (ids 11–16):**
+- Stuff spans large image regions; bbox = full image
+- Instead: sample 6 random crop centers from projected points
+- Take 224×224 crops at each center, encode, average CLS tokens
+- This gives diverse local samples of the stuff texture rather than a full-image crop
+
+**Expected improvement:** Object-crop CLS should have sim_own ≈ 0.3–0.5 and positive margin_to_base for most novel classes. This is the feature space CLIP text-image contrastive training was designed for.
+
+**Output schema (v2 .npz):**
+```
+obj_feats:      (N_gt, 768) float16   crop-CLS per instance
+obj_classes:    (N_gt,)     int32
+obj_valid:      (N_gt,)     bool
+obj_num_views:  (N_gt,)     int16     cameras with valid crop
+obj_num_points: (N_gt,)     int32     total projected points
+obj_margin:     (N_gt,)     float16   sim_own - sim_best_base (diagnostic)
+vox_feats:      (4096, 768) float16   (kept for backward compat / future L_V)
+n_valid:        int
+n_voxels:       int32
+```
+
+**Storage:** Same as v1 (~170GB) — vox_feats preserved, no schema size increase.
+
+### 10.2 L_V v2: Instance-Broadcast Crop-CLS (Option B)
+
+For each sampled voxel, assign the crop-CLS feature of its GT instance as target:
+```
+vox_target[v] = obj_feats[gt_instance_of_v]
+```
+
+Voxels without GT assignment (background) get no target (zero → skipped by loss).
+
+**First ablation:** `L_V.weight = 0.0` — isolate whether crop-CLS L_O alone fixes novel PQ.
+**Second ablation (if needed):** enable instance-broadcast L_V at weight=0.1–0.5.
+
+### 10.3 Neg-Bank Rebuild (NB-C)
+
+Rebuild `negative_bank_200.pt` with proper filtering:
+- Start from a larger concept list (~400–500 driving/urban concepts)
+- Filter: remove any entry with cosine sim > 0.75 to any of the 16 class prototypes
+- Filter: enforce intra-bank diversity (sim < 0.70 between bank entries)
+- Target: ~150–200 entries that are genuinely "not any of these 16 classes"
+
+Examples of entries to REMOVE: school bus, pickup truck, SUV, motorcycle rider, person walking, shrub, crosswalk, boat trailer, bicycle rider, bollard (too close to traffic cone)
+Examples to KEEP: playground slide, shopping cart, fire hydrant, parking meter, hot dog cart, manhole cover, bicycle rack, traffic light, storefront awning
+
+### 10.4 Prompt Re-Engineering (PR-B: Multi-prompt with discriminative templates)
+
+Update `text_prototypes_vitl14_224_multiprompt.pt` with prompts that maximize inter-class margins. Focus on the two most fragile pairs:
+
+**motorcycle vs bicycle (margin=0.087):**
+```
+motorcycle: ["a motorcycle in a driving scene", "a motorized two-wheeled vehicle",
+             "a motorbike on the road", "a motorcycle parked or riding"]
+bicycle:    ["a bicycle in a driving scene", "a non-motorized pedal bicycle",
+             "a cyclist on a bicycle", "a bicycle without engine"]
+```
+
+**vegetation vs terrain (margin=0.124):**
+```
+vegetation: ["vegetation in a scene", "green trees and leafy plants",
+             "tall trees along a road", "natural vegetation and shrubs"]
+terrain:    ["terrain in a scene", "rough unpaved natural ground",
+             "dirt and gravel surface", "off-road ground surface"]
+```
+
+After regenerating, run Script B to confirm margins improve before proceeding.
+
+### 10.5 Validation Gates Before Full Job1b
+
+Run Script A on mini v2 precompute:
+
+| Metric | Gate |
+|---|---|
+| Novel valid coverage | > 50% |
+| Novel mean margin_to_base | > 0 (positive) |
+| Novel top-1 text accuracy | > 50% |
+| Novel top-3 text accuracy | > 70% |
+
+If any gate fails: check crop quality (expansion factor, min_pts), visualize 50 crops per novel class with top-5 text predictions.
+
+### 10.6 Job Sequence After Feature Branch
+
+```
+1. job1a full → finish (currently running)
+2. Feature branch:
+   a. Rebuild neg-bank (NB-C)
+   b. Regenerate multiprompt prototypes (PR-B discriminative)
+   c. Run Script B → confirm novel margins improved
+   d. Precompute v2 on mini (crop-CLS)
+   e. Run Script A on mini v2 → confirm gates pass
+   f. If gates pass: recompute full trainval v2 (~8h)
+3. job1b-v2:
+   - warm-start: job1a best
+   - L_O=1.0 (crop-CLS teacher)
+   - L_V=0.0 (first ablation)
+   - neg-bank: rebuilt v2
+   - Run mini smoke test (3 epochs) → check novel PQ > 0
+   - If passing: launch full job1b-v2
+```
 
 ---
 

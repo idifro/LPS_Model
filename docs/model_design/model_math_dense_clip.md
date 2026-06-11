@@ -154,33 +154,66 @@ L_obj = BCE(o, y_obj)
 
 where y_obj_q = 1 if query q is matched, 0 otherwise.
 
-### 5.3 L5/C1: Token Contrastive Loss with 216+ Negatives (v2 — Margin + Soft Negatives)
+### 5.3 L5/C1: Token Contrastive Loss with 200-entry Denominator (v2 — Margin + exclude_novel)
 
-Let P_all ∈ ℝ^{(16+N_neg)×768} be the concatenation of 16 class prototypes (including 4 novel as soft negatives) and N_neg=200 negative concept embeddings. All L2-normalized.
+Let P_base ∈ ℝ^{12×768} be the 12 base class prototypes (L2-normalized).
+Let P_neg ∈ ℝ^{188×768} be the negative bank (`negative_bank_200.pt`; actual count 188).
+Let P_all = [P_base ; P_neg] ∈ ℝ^{200×768} (novel protos excluded via `exclude_novel_from_denom=True`).
 
-For each matched query (i, j) where GT class c_j ∈ base_ids (12 training classes, excludes novel):
+For each matched query (i, j) where GT class c_j ∈ base_ids:
 
 ```
-s_k = E_i · P_k                           (cosine similarity to k-th proto)
-s'_k = s_k - m · 𝟙[k = c_j]              (subtract margin m from GT class)
-L_C1 = (1/N_matched) Σ_{(i,j)∈σ*} -log(exp(τ · s'_{c_j}) / Σ_k exp(τ · s'_k))
+s_k = E_i · P_all_k                          (cosine similarity, k ∈ {0,...,199})
+s'_k = s_k - m · 𝟙[k = remap(c_j)]          (subtract margin m from GT class slot)
+L_C1 = (1/N_matched) Σ_{(i,j)∈σ*_base} -log(exp(τ · s'_{remap(c_j)}) / Σ_k exp(τ · s'_k))
 ```
 
 where:
-- τ = exp(log_τ), clamped to [1.0, 5.0] (prevents saturation)
-- m = 0.1 (margin penalty — forces cos_sim(GT) - cos_sim(confuser) > m)
-- k ranges over all 216 protos (12 base + 4 novel + 200 negatives)
-- Novel protos (bus, pedestrian, manmade, vegetation) are NEVER targets, only denominators
+- τ = exp(log_τ), **clamped to [0.07, 5.0]**  ← corrected from prior [1.0, 5.0]
+- **log_τ initialized at log(0.5) → τ_0 = 0.5**  ← corrected from prior log(3.0) / log(14.3)
+- m = 0.1 (margin penalty)
+- remap(c_j) remaps original 0–15 class index to compact denominator index 0–11
+- Novel classes {bus=2, motorcycle=5, pedestrian=6, vegetation=15} are excluded from denominator and never targets
 
-**With multi-prompt (T4):** At each training step, P_{c_j} is randomly sampled from 10 template-generated embeddings for class c_j.
+**Temperature history:**
+- v0: τ_0=14.3 (above clamp max=5.0, zero gradient for entire run)
+- v1: τ_0=3.0, clamp [1.0, 5.0] (gradient present but floor too high to reach CLIP native 0.07)
+- **v2 (current): τ_0=0.5, clamp [0.07, 5.0]** (full range, gradient from epoch 0)
 
-**Gradient effect of margin:** The model receives zero reward for achieving sim(GT) > sim(confuser). It only gets reward for sim(GT) - m > sim(confuser). This directly creates the cosine separation needed for open-vocab generalization.
+**With multi-prompt (T4):** P_{c_j} is randomly sampled at each step from 10 templates per class.
+
+**Gradient effect of margin:** Forces cos_sim(GT) - cos_sim(confuser) > m before contributing positive gradient.
 
 ### 5.4 L_O: Object-Level Camera CLIP Distillation
 
-Let fv_clip ∈ ℝ^{V×768} be per-voxel camera CLIP features (from cached patch grid + bilinear projection).
+**v1 (current — patch-pooled, known to be misaligned):**
 
-For each matched query (i, j):
+Let F_obj ∈ ℝ^{N_gt×768} be the precomputed mask-pooled patch-token features (from cached .npz).
+For each matched query (i, j) via `indices_all` (all-GT matcher, base + novel):
+
+```
+target_i = F_obj[cache_idx(j)]              (precomputed patch-pooled feature for GT instance j)
+L_O = (1/N_covered) Σ_{(i,j): ||target_i||>ε} (1 - E_i · target_i)
+```
+
+**Known issue:** Diagnostic (Script A) shows target_i has sim_own=0.12–0.26 and margin_to_base < 0 for ALL classes. L_O v1 teaches the model to produce embeddings that the text prototypes cannot correctly classify.
+
+**v2 (planned — crop-CLS):**
+
+For each GT instance k, compute T_k ∈ ℝ^{768} via object-crop CLS encoding (see arch doc Section 10):
+
+```
+T_k = L2Norm( Σ_c n_pts_{k,c} · CLS(encode_image(crop_{k,c})) / Σ_c n_pts_{k,c} )
+```
+
+where crop_{k,c} is the 224×224 image crop from camera c covering the 2D bbox of GT instance k (1.3× expanded, squared). For stuff: average over 6 random 224×224 crops centered on projected points.
+
+Loss formula is unchanged:
+```
+L_O = (1/N_covered) Σ_{(i,j): ||T_{j}||>ε} (1 - E_i · T_j)
+```
+
+**Bug fix (applied):** `indices_all` is now used instead of `indices` (base-filtered), so novel-matched queries receive L_O supervision.
 
 ```
 w_i = (σ(M[:,i]) / ||σ(M[:,i])||_1) · fv_clip    ∈ ℝ^{768}   (soft-pooled target)
@@ -332,17 +365,15 @@ L7                      →  LoRA adapters φ DIRECTLY (via F[v], strongest per-
 
 ### Class Partitioning
 
-- **B12 (base):** {barrier, bicycle, car, construction_vehicle, motorcycle, traffic_cone, trailer, truck, driveable_surface, other_flat, sidewalk, terrain}
-- **N4 (novel):** {bus, pedestrian, vegetation, manmade}
+- **B12 (base, training targets):** barrier(0), bicycle(1), car(3), construction_vehicle(4), traffic_cone(7), trailer(8), truck(9), driveable_surface(10), other_flat(11), sidewalk(12), terrain(13), manmade(14)
+- **N4 (novel, held-out):** bus(2), motorcycle(5), pedestrian(6), vegetation(15)
 
 ### Training Implications
 
-- GT masks for N4 classes are **excluded from all training losses** (mask, dice, token, L_O)
-- No class labels, no mask supervision for novel classes during training
-- L_V supervises ALL covered voxels regardless of class (camera features are class-agnostic) — this is the only signal that touches novel voxels
-- Novel protos remain in C1 denominator as soft negatives (pushes embeddings away)
-
-This ensures PQ_novel > 0 can only come from genuine CLIP-space generalization, not from mask supervision leakage.
+- GT masks for N4 classes are **excluded from all training losses** (mask, dice, C1 token, L_O)
+- Novel protos are excluded from C1 denominator (`exclude_novel_from_denom=True`) — the loss cannot push embeddings away from novel prototype regions
+- L_V supervises ALL covered voxels regardless of class (camera features are class-agnostic) — novel voxels receive indirect signal via L_V
+- L_O v2 (crop-CLS) provides direct per-instance CLIP alignment signal for novel instances; because novel GT masks ARE available in precompute (just not in CE loss), the crop-CLS teacher can encode semantically meaningful features for novel instances
 
 ### Inference on Novel Classes
 
@@ -351,4 +382,4 @@ P_eval = [P_base12 ; P_novel4] ∈ ℝ^{16×768}
 class(q) = argmax_k (E_q · P_eval_k^T / τ)
 ```
 
-Novel classes are classified purely by proximity in CLIP embedding space. The L_O and L_V losses ensure E_q is CLIP-aligned; L7 ensures backbone features have margin; L_C1 ensures the head respects CLIP geometry.
+Novel classes classified by proximity in CLIP embedding space. The L_O distillation (v2) and L_C1 together ensure E_q is CLIP-aligned and has positive margin toward the correct prototype.
