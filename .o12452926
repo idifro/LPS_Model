@@ -1,0 +1,38 @@
+/home/ddb1cob/.lsbatch/1781027022.12452926: line 8: LPS_Model/panoptic/scripts/train_e2e_mini_job.sh: No such file or directory
+
+------------------------------------------------------------
+Sender: LSF System <jdl1fe@rng-dl01-w081>
+Subject: Job 12452926: <LPS_Model/panoptic/scripts/train_e2e_mini_job.sh> in cluster <rng-dl01> Exited
+
+Job <LPS_Model/panoptic/scripts/train_e2e_mini_job.sh> was submitted from host <rng-dl01-login1> by user <ddb1cob> in cluster <rng-dl01> at Tue Jun  9 19:43:42 2026
+Job was executed on host(s) <rng-dl01-w081>, in queue <batch_a100>, as user <ddb1cob> in cluster <rng-dl01> at Tue Jun  9 19:43:43 2026
+</home/ddb1cob> was used as the home directory.
+</fs/scratch/SX_ETL3_GenAI_Team/mha2cob/vandana_experiments/LPS_Model> was used as the working directory.
+Started at Tue Jun  9 19:43:43 2026
+Terminated at Tue Jun  9 19:43:46 2026
+Results reported at Tue Jun  9 19:43:46 2026
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+LPS_Model/panoptic/scripts/train_e2e_mini_job.sh
+------------------------------------------------------------
+
+Exited with exit code 127.
+
+Resource usage summary:
+
+    CPU time :                                   0.09 sec.
+    Max Memory :                                 16 MB
+    Average Memory :                             16.00 MB
+    Total Requested Memory :                     1024.00 MB
+    Delta Memory :                               1008.00 MB
+    Max Swap :                                   -
+    Max Processes :                              1
+    Max Threads :                                2
+    Run time :                                   3 sec.
+    Turnaround time :                            4 sec.
+
+The output (if any) is above this job summary.
+

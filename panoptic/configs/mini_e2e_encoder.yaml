@@ -22,7 +22,7 @@ augmentation:
 
 # ── Model ──
 model:
-  backbone_ckpt: models/nuscenes_openseg.pth.tar
+  backbone_ckpt: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/models/nuscenes_openseg.pth.tar
   backbone_dim: 768
   hidden_dim: 256
   num_classes: 16
@@ -38,11 +38,11 @@ model:
 e2e:
   enabled: true
   # Which backbone layers to unfreeze: "all", "decoder_only", "last_n_stages"
-  unfreeze_mode: decoder_only
+  unfreeze_mode: last_n_stages
   # Number of encoder stages to unfreeze from the end (if unfreeze_mode=last_n_stages)
   unfreeze_last_n: 2
   # Backbone learning rate (differential LR)
-  backbone_lr: 1.0e-5
+  backbone_lr: 1.0e-6
   # Epoch to start unfreezing (0 = from the beginning, >0 = freeze first N epochs)
   unfreeze_after_epoch: 5
   # Warm-start from frozen-backbone checkpoint
@@ -66,7 +66,7 @@ loss:
 # ── Training ──
 training:
   epochs: 50
-  lr: 1.0e-4
+  lr: 1.0e-6
   weight_decay: 0.01
   grad_clip: 0.5
   grad_accum: 4
@@ -74,7 +74,7 @@ training:
   num_workers: 0
   seed: 42
   scheduler: cosine_warmup
-  warmup_epochs: 2
+  warmup_epochs: 3
   min_lr: 1.0e-6
 
   mixed_precision: true
@@ -86,11 +86,10 @@ logging:
   wandb_project: openscene-panoptic-e2e
   wandb_entity: null
   wandb_enabled: true
-  wandb_run_name: mini_e2e_decoder_only
-
+  wandb_run_name: mini_e2e_all
 # ── Checkpointing ──
 checkpoint:
-  save_dir: panoptic/checkpoints_e2e_mini
+  save_dir: panoptic/checkpoints_e2e_mini_all
   save_every: 5
   resume: null
   auto_resume: true

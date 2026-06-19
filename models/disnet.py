@@ -162,3 +162,7 @@ class DisNet(nn.Module):
                 (512 for LSeg, 768 for OpenSeg).
         """
         return self.net3d(sparse_3d)
+
+    def forward_with_context(self, x, context_encoder, pos_enc=None):
+        """Delegate to inner MinkUNet forward_with_context."""
+        return self.net3d.forward_with_context(x, context_encoder, pos_enc)

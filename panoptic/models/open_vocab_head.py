@@ -15,16 +15,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def safe_normalize(x, dim=-1, eps=1e-6):
+    """L2-normalize with a safe epsilon to avoid NaN on zero vectors."""
+    norm = x.norm(dim=dim, keepdim=True).clamp(min=eps)
+    return x / norm
+
+
 class RegionCLIPHead(nn.Module):
     """Projects decoder query embeddings into CLIP feature space.
-    
-    Unlike CLIPTokenHead which just projects queries, this also supports
-    mask-weighted pooling of backbone features for region-level CLIP alignment.
-    
+
     Architecture:
         query (256-d) → MLP → L2-normalized CLIP embedding (768-d)
     """
-    
+
     def __init__(self, hidden_dim=256, clip_dim=768, num_layers=3):
         super().__init__()
         layers = []
@@ -38,7 +41,7 @@ class RegionCLIPHead(nn.Module):
         layers.append(nn.Linear(in_dim, clip_dim))
         self.mlp = nn.Sequential(*layers)
         self.clip_dim = clip_dim
-    
+
     def forward(self, query_features):
         """
         Args:
@@ -47,27 +50,18 @@ class RegionCLIPHead(nn.Module):
             (B, Q, clip_dim) L2-normalized CLIP-space embeddings
         """
         out = self.mlp(query_features)
-        return F.normalize(out, dim=-1)
+        return safe_normalize(out, dim=-1)
 
 
 class ObjectnessHead(nn.Module):
-    """Predicts objectness scores: thing / stuff / no-object.
-    
-    This is class-AGNOSTIC — it doesn't predict which class, just whether
-    a query corresponds to a thing instance, stuff region, or nothing.
-    """
-    
+    """Predicts objectness scores: thing / stuff / no-object (class-agnostic)."""
+
     def __init__(self, hidden_dim=256, mode="ternary"):
-        """
-        Args:
-            hidden_dim: Input dimension from decoder queries
-            mode: "ternary" (thing/stuff/no-obj) or "binary" (object/no-obj)
-        """
         super().__init__()
         self.mode = mode
         num_classes = 3 if mode == "ternary" else 2
         self.head = nn.Linear(hidden_dim, num_classes)
-    
+
     def forward(self, query_features):
         """
         Args:
@@ -79,22 +73,12 @@ class ObjectnessHead(nn.Module):
 
 
 class RegionPooler(nn.Module):
-    """Pools backbone features per predicted mask to get region-level CLIP features.
-    
-    This is KEY for open-vocab: the backbone already outputs CLIP-aligned 768-d features.
-    By pooling them per mask, we get a region-level CLIP descriptor that can be compared
-    against ANY text query at inference time.
-    """
-    
+    """Pools backbone features per predicted mask to get region-level CLIP features."""
+
     def __init__(self, mode="weighted_mean"):
-        """
-        Args:
-            mode: "mean" (simple average over mask voxels) or 
-                  "weighted_mean" (mask-probability-weighted average)
-        """
         super().__init__()
         self.mode = mode
-    
+
     def forward(self, backbone_feats, pred_masks):
         """
         Args:
@@ -104,41 +88,28 @@ class RegionPooler(nn.Module):
             (B, Q, D) pooled region features in CLIP space
         """
         B, V, D = backbone_feats.shape
-        Q = pred_masks.shape[-1]
-        
-        # Softly weight features by mask probability
+
         mask_probs = pred_masks.sigmoid()  # (B, V, Q)
-        
+
         if self.mode == "weighted_mean":
-            # Weighted average: sum(mask_prob * feat) / sum(mask_prob)
-            # (B, V, Q) -> transpose -> (B, Q, V) @ (B, V, D) -> (B, Q, D)
-            weights = mask_probs.permute(0, 2, 1)  # (B, Q, V)
-            weight_sum = weights.sum(dim=-1, keepdim=True).clamp(min=1e-6)  # (B, Q, 1)
-            pooled = torch.bmm(weights, backbone_feats) / weight_sum  # (B, Q, D)
+            weights = mask_probs.permute(0, 2, 1)          # (B, Q, V)
+            weight_sum = weights.sum(dim=-1, keepdim=True).clamp(min=1e-3)  # (B, Q, 1)
+            pooled = torch.bmm(weights, backbone_feats) / weight_sum        # (B, Q, D)
         else:
-            # Hard mask pooling (threshold at 0.5)
-            hard_masks = (mask_probs > 0.5).float()  # (B, V, Q)
-            weights = hard_masks.permute(0, 2, 1)  # (B, Q, V)
-            weight_sum = weights.sum(dim=-1, keepdim=True).clamp(min=1e-6)
+            hard_masks = (mask_probs > 0.5).float()
+            weights = hard_masks.permute(0, 2, 1)
+            weight_sum = weights.sum(dim=-1, keepdim=True).clamp(min=1e-3)
             pooled = torch.bmm(weights, backbone_feats) / weight_sum
-        
-        # L2-normalize to CLIP space
-        pooled = F.normalize(pooled, dim=-1)
+
+        # Safe L2-normalize — avoids NaN when pooled vector has near-zero norm
+        # (happens when all mask probs are ~0 for a query with no attended voxels)
+        pooled = safe_normalize(pooled, dim=-1)
         return pooled
 
 
 class OpenVocabPanopticHead(nn.Module):
-    """Combined open-vocabulary panoptic prediction head.
-    
-    Replaces the closed-set (class_embed + token_head) with:
-    - objectness_head: thing/stuff/no-object
-    - region_clip_head: query → CLIP space (for text-based classification)
-    - region_pooler: backbone features → per-mask CLIP descriptor
-    
-    At inference, classification = cosine_sim(region_feature, text_embedding)
-    weighted by objectness confidence.
-    """
-    
+    """Combined open-vocabulary panoptic prediction head."""
+
     def __init__(self, hidden_dim=256, clip_dim=768, num_mlp_layers=3,
                  objectness_mode="ternary", pool_mode="weighted_mean"):
         super().__init__()
@@ -146,14 +117,14 @@ class OpenVocabPanopticHead(nn.Module):
         self.region_clip_head = RegionCLIPHead(hidden_dim, clip_dim, num_mlp_layers)
         self.region_pooler = RegionPooler(pool_mode)
         self.clip_dim = clip_dim
-        
+
         # Learnable temperature for contrastive loss
         self.log_temperature = nn.Parameter(torch.tensor(2.6592))  # ~ln(14.3)
-    
+
     @property
     def temperature(self):
         return self.log_temperature.exp()
-    
+
     def forward(self, query_features, backbone_feats=None, pred_masks=None):
         """
         Args:
@@ -170,8 +141,8 @@ class OpenVocabPanopticHead(nn.Module):
             "objectness": self.objectness_head(query_features),
             "query_clip": self.region_clip_head(query_features),
         }
-        
+
         if backbone_feats is not None and pred_masks is not None:
             out["region_clip"] = self.region_pooler(backbone_feats, pred_masks)
-        
+
         return out

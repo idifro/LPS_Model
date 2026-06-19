@@ -127,7 +127,6 @@ class OpenVocabPanopticLoss(nn.Module):
             cost_class=cost_class,
             cost_mask=cost_mask,
             cost_dice=cost_dice,
-            num_points=num_mask_pts,
             p_ratio=p_ratio,
         )
 
@@ -336,8 +335,14 @@ class OpenVocabPanopticLoss(nn.Module):
             w_q = region_clip[b_idx, pred_idx]  # (M, 768)
 
             # Cosine distance: 1 - cos_sim
-            cos = F.cosine_similarity(v_q, w_q, dim=-1)  # (M,)
+            if torch.isnan(v_q).any() or torch.isnan(w_q).any():
+                continue
+            v_q = F.normalize(v_q, dim=-1)
+            w_q = F.normalize(w_q, dim=-1)
+            cos = F.cosine_similarity(v_q, w_q, dim=-1).clamp(-1, 1)
             loss = (1.0 - cos).mean()
+            if torch.isnan(loss):
+                continue
             total_loss += loss
             n_matched += 1
 
@@ -395,6 +400,8 @@ class OpenVocabPanopticLoss(nn.Module):
         else:
             loss = F.l1_loss(F_rec, backbone_feats.detach())
 
+        if torch.isnan(loss):
+            return torch.tensor(0.0, device=loss.device if hasattr(loss, "device") else "cpu", requires_grad=True)
         return loss
 
     def _compute_density_weight(self, coords, radius=0.5):
@@ -473,12 +480,21 @@ class OpenVocabPanopticLoss(nn.Module):
 
             # mask_pool: weighted average of backbone CLIP features per query
             # w_q = (attn^T @ F_backbone) / attn.sum  → (U, 768)
-            attn_norm = attn_weights.sum(dim=0, keepdim=True).clamp(min=1e-6)  # (1, U)
+            attn_norm = attn_weights.sum(dim=0, keepdim=True).clamp(min=1e-2)  # (1, U)
+            # skip queries with negligible attention (avoid NaN)
+            valid = attn_norm.squeeze(0) > 1e-2  # (U,)
+            if valid.sum() == 0:
+                continue
             F_bb = backbone_feats[b_idx]  # (V, 768)
-            w_q = (attn_weights.T @ F_bb) / attn_norm.T   # (U, 768)
-
-            cos = F.cosine_similarity(v_q_unmatched, w_q.detach(), dim=-1)  # (U,)
+            w_q = (attn_weights[:, valid].T @ F_bb) / attn_norm[:, valid].T  # (U', 768)
+            v_q_valid = v_q_unmatched[valid]  # (U', 768)
+            # NaN guard
+            if torch.isnan(w_q).any() or torch.isnan(v_q_valid).any():
+                continue
+            cos = F.cosine_similarity(v_q_valid, w_q.detach(), dim=-1)
             loss = (1.0 - cos).mean()
+            if torch.isnan(loss):
+                continue
             total_loss += loss
             n_items += 1
 
@@ -486,7 +502,7 @@ class OpenVocabPanopticLoss(nn.Module):
 
 
 
-class OpenVocabPanopticLoss(nn.Module):
+class OpenVocabPanopticLossV2(nn.Module):
     """Loss for open-vocabulary panoptic segmentation.
     
     Components:
@@ -553,7 +569,6 @@ class OpenVocabPanopticLoss(nn.Module):
             cost_class=cost_class,
             cost_mask=cost_mask,
             cost_dice=cost_dice,
-            num_points=num_mask_pts,
             p_ratio=p_ratio,
         )
     

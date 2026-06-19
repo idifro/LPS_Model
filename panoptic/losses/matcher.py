@@ -106,6 +106,10 @@ class HungarianMatcher(nn.Module):
                 + self.cost_dice * cost_dice_val
             )
             C = C.reshape(num_queries, -1).cpu()
+            if not torch.isfinite(C).all():
+                C = C.clone()
+                c_inf = ~torch.isfinite(C)
+                C[c_inf] = 1e4
             indices.append(lsa(C))
 
         return [

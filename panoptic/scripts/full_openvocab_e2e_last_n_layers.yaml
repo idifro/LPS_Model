@@ -1,0 +1,104 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Open-Vocabulary E2E Panoptic — nuScenes FULL — last_n_stages
+# ══════════════════════════════════════════════════════════════════════════════
+data:
+  dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes
+  version: v1.0-trainval
+  voxel_size: 0.05
+  point_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+
+augmentation:
+  enabled: true
+  random_rotate_z: true
+  random_flip_x: true
+  random_flip_y: true
+  random_scale_min: 0.95
+  random_scale_max: 1.05
+  random_translate_std: 0.1
+
+model:
+  backbone_ckpt: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/models/nuscenes_openseg.pth.tar
+  backbone_dim: 768
+  hidden_dim: 256
+  num_classes: 16
+  num_thing_queries: 100
+  num_stuff_classes: 6
+  nheads: 8
+  dim_feedforward: 1024
+  num_blocks: 3
+  num_levels: 3
+  dropout: 0.0
+
+open_vocab:
+  token_dim: 768
+  token_mlp_layers: 3
+  objectness_mode: ternary
+  region_pool_mode: weighted_mean
+  novel_class_idx: [1, 2, 5, 15]
+
+e2e:
+  enabled: true
+  unfreeze_mode: last_n_stages
+  unfreeze_last_n: 2                 # unfreeze block5, block6, convtr layers
+  unfreeze_after_epoch: 5            # freeze for first 5 epochs, then unfreeze
+  backbone_lr: 5.0e-7                # very low — backbone is pretrained
+  warmstart_ckpt: panoptic/checkpoints/full_openvocab_decoder_only/best.pth  # warm-start from decoder_only best
+  unfreeze_encoder: false
+
+context_encoder:
+  dim: 256
+  num_heads: 4
+  depth: 1
+  use_pos_enc: false
+  lr: 2.0e-5                         # lower than decoder_only run
+
+loss:
+  eos_coef: 0.2
+  cost_class: 2.0
+  cost_mask: 5.0
+  cost_dice: 5.0
+  weight_cls: 1.0
+  weight_mask: 5.0
+  weight_dice: 5.0
+  weight_object_distill: 1.0
+  weight_voxel_distill: 0.05
+  focal_gamma: 2.0
+  focal_alpha: 0.25
+  num_points: 50000
+  num_mask_pts: 500
+  p_ratio: 0.75
+  loss_component_max: 50.0
+
+training:
+  epochs: 30
+  lr: 2.0e-5                         # lower than decoder_only — backbone is sensitive
+  min_lr: 1.0e-7
+  weight_decay: 0.05
+  grad_clip: 0.5                     # tighter than decoder_only to protect backbone
+  grad_accum: 4
+  warmup_epochs: 2
+  mixed_precision: true
+  num_workers: 4
+  seed: 42
+  bad_loss_threshold: 100.0          # tighter threshold — backbone unfreezing is riskier
+  reset_momentum_on_skip: true
+
+inference:
+  overlap_thr: 0.3                   # lower than decoder_only — more detections
+  min_points: 50
+  clip_score_weight: 0.7
+  objectness_weight: 0.3
+
+logging:
+  log_every: 50
+  eval_every: 5
+  wandb_enabled: true
+  wandb_project: lps_openvocab
+  wandb_entity: vandana-1302238
+  wandb_run_name: full_openvocab_last_n
+
+checkpoint:
+  save_dir: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/vandana_experiments/LPS_Model/panoptic/checkpoints/full_openvocab_last_n
+  save_every: 1
+  resume: null
+  auto_resume: true

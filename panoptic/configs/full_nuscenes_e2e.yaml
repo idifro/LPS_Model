@@ -38,9 +38,9 @@ e2e:
   enabled: true
   unfreeze_mode: decoder_only
   unfreeze_last_n: 2
-  backbone_lr: 1.0e-5
-  unfreeze_after_epoch: 3
-  warmstart_ckpt: panoptic/checkpoints/best.pth
+  backbone_lr: 1.0e-6
+  unfreeze_after_epoch: 10
+  warmstart_ckpt: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/panoptic/checkpoints_token_full_v2/best.pth
 
 # ── Loss ──
 loss:
@@ -68,7 +68,7 @@ training:
   num_workers: 4
   seed: 42
   scheduler: cosine_warmup
-  warmup_epochs: 2
+  warmup_epochs: 3
   min_lr: 1.0e-6
   mixed_precision: true
 
@@ -92,3 +92,16 @@ checkpoint:
 inference:
   overlap_thr: 0.8
   min_points: 50
+
+open_vocab:
+  token_dim: 768
+  token_mlp_layers: 3
+
+  objectness_mode: ternary
+  region_pool_mode: weighted_mean
+
+  clip_score_weight: 0.7
+  objectness_weight: 0.3
+
+  # leave default unless you specifically changed novel classes
+  novel_class_idx: [1, 5, 8, 10]

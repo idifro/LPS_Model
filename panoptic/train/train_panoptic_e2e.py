@@ -567,7 +567,7 @@ def main():
     )
 
     # ── Optimizer with differential LR ──
-    backbone_lr = e2e_cfg.get("backbone_lr", 1e-5)
+    backbone_lr = e2e_cfg.get("backbone_lr",1e-6)
     param_groups = [
         {"params": [p for p in decoder.parameters() if p.requires_grad],
          "lr": tcfg["lr"], "name": "decoder"},
@@ -606,7 +606,15 @@ def main():
         decoder.load_state_dict(ckpt["decoder"])
         if "backbone" in ckpt:
             backbone.load_state_dict(ckpt["backbone"])
-        optimizer.load_state_dict(ckpt["optimizer"])
+        # optimizer.load_state_dict(ckpt["optimizer"])
+        ckpt_opt = ckpt.get("optimizer")
+        if ckpt_opt and len(ckpt_opt["param_groups"]) == len(optimizer.param_groups):
+            optimizer.load_state_dict(ckpt_opt)
+        else:
+            if is_main:
+                print(f"[Resume] Skipping optimizer state — "
+                      f"group count mismatch: ckpt={len(ckpt_opt['param_groups']) if ckpt_opt else 0} "
+                      f"vs current={len(optimizer.param_groups)}")
         scheduler.load_state_dict(ckpt["scheduler"])
         if scaler is not None and "scaler" in ckpt:
             scaler.load_state_dict(ckpt["scaler"])

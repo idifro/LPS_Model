@@ -1,0 +1,102 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Open-Vocabulary E2E Panoptic — nuScenes MINI — decoder_only
+# ══════════════════════════════════════════════════════════════════════════════
+
+data:
+  dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini
+  version: v1.0-mini
+  voxel_size: 0.05
+  point_range: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+
+augmentation:
+  enabled: true
+  random_rotate_z: true
+  random_flip_x: true
+  random_flip_y: true
+  random_scale_min: 0.95
+  random_scale_max: 1.05
+  random_translate_std: 0.1
+
+model:
+  backbone_ckpt: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/openscene/models/nuscenes_openseg.pth.tar
+  backbone_dim: 768
+  hidden_dim: 256
+  num_classes: 16
+  num_thing_queries: 100
+  num_stuff_classes: 6
+  nheads: 8
+  dim_feedforward: 1024
+  num_blocks: 3
+  num_levels: 3
+  dropout: 0.0
+
+open_vocab:
+  token_dim: 768
+  token_mlp_layers: 3
+  objectness_mode: ternary
+  region_pool_mode: weighted_mean
+  novel_class_idx: [1, 2, 5, 15]   # B12/N4: bicycle, bus, motorcycle, vegetation
+
+e2e:
+  enabled: true
+  unfreeze_mode: decoder_only
+  unfreeze_last_n: 2
+  unfreeze_after_epoch: 0
+  backbone_lr: 1.0e-6
+  warmstart_ckpt: null
+  unfreeze_encoder: false
+
+context_encoder:
+  dim: 256
+  num_heads: 4
+  depth: 1
+  use_pos_enc: false
+  lr: 5.0e-5
+
+loss:
+  eos_coef: 0.1
+  cost_class: 2.0
+  cost_mask: 5.0
+  cost_dice: 5.0
+  weight_cls: 2.0
+  weight_mask: 5.0
+  weight_dice: 5.0
+  weight_object_distill: 1.0
+  weight_voxel_distill: 0.1
+  focal_gamma: 4.0
+  focal_alpha: 0.25
+  num_points: 50000
+  num_mask_pts: 500
+  p_ratio: 0.75
+
+training:
+  epochs: 50
+  lr: 5.0e-5
+  min_lr: 1.0e-6
+  weight_decay: 0.01
+  grad_clip: 0.1
+  grad_accum: 4
+  warmup_epochs: 3
+  mixed_precision: true
+  num_workers: 0
+  seed: 42
+
+inference:
+  overlap_thr: 0.8
+  min_points: 50
+  clip_score_weight: 0.7
+  objectness_weight: 0.3
+
+logging:
+  log_every: 10
+  eval_every: 5
+  wandb_enabled: true
+  wandb_project: lps_openvocab
+  wandb_entity: null
+  wandb_run_name: mini_openvocab_decoder_only
+
+checkpoint:
+  save_dir: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/vandana_experiments/LPS_Model/panoptic/checkpoints/mini_openvocab_decoder_only
+  save_every: 5
+  resume: panoptic/checkpoints/mini_openvocab_decoder_only/best.pth
+  auto_resume: panoptic/checkpoints/mini_openvocab_decoder_only/best.pth
