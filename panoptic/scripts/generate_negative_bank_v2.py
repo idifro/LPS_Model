@@ -397,6 +397,16 @@ CANDIDATE_CONCEPTS = [
 # Deduplicate preserving order
 CANDIDATE_CONCEPTS = list(dict.fromkeys(CANDIDATE_CONCEPTS))
 
+# Hard denylist: these keywords match ZEROSHOT_CONCEPTS in train_panoptic_job1.py:749.
+# They must never appear in the neg-bank regardless of sim score — if they did,
+# the zero-shot eval at validation would be testing concepts the model has seen as negatives.
+ZEROSHOT_DENYLIST = {"ambulance", "trash can", "fire hydrant", "police van"}
+
+
+def _in_denylist(concept: str) -> bool:
+    cl = concept.lower()
+    return any(kw in cl for kw in ZEROSHOT_DENYLIST)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -430,12 +440,23 @@ def main():
     model, _ = clip.load(args.model_name, device=args.device, jit=False)
     model.eval()
 
-    # Encode all candidate concepts
-    print(f"Encoding {len(CANDIDATE_CONCEPTS)} candidate concepts...")
+    # Step 0: Hard denylist — remove ZEROSHOT_CONCEPTS before any sim-based filtering.
+    # These are used as open-vocab eval probes at validation time; they must not be
+    # visible to the model as negative training examples.
+    candidates = [c for c in CANDIDATE_CONCEPTS if not _in_denylist(c)]
+    n_denied = len(CANDIDATE_CONCEPTS) - len(candidates)
+    if n_denied:
+        denied = [c for c in CANDIDATE_CONCEPTS if _in_denylist(c)]
+        print(f"Hard denylist removed {n_denied} concept(s): {denied}")
+    else:
+        print("Hard denylist: no concepts matched (OK).")
+
+    # Encode remaining candidates
+    print(f"Encoding {len(candidates)} candidate concepts...")
     all_embs = []
     batch_size = 64
-    for i in range(0, len(CANDIDATE_CONCEPTS), batch_size):
-        batch = CANDIDATE_CONCEPTS[i:i + batch_size]
+    for i in range(0, len(candidates), batch_size):
+        batch = candidates[i:i + batch_size]
         tokens = clip.tokenize(batch).to(args.device)
         with torch.no_grad():
             emb = model.encode_text(tokens)
@@ -452,18 +473,18 @@ def main():
 
     rejected_class = (max_sim_to_class > args.class_sim_thresh).sum().item()
     print(f"\nFilter 1 (sim>{args.class_sim_thresh} to any class proto):")
-    print(f"  Rejected: {rejected_class} / {len(CANDIDATE_CONCEPTS)}")
+    print(f"  Rejected: {rejected_class} / {len(candidates)}")
 
     # Print top-10 most similar to class protos (so we can see what's filtered)
     sorted_idx = max_sim_to_class.argsort(descending=True)
     print("  Top-10 most similar to class protos (filtered out first):")
     for ii in sorted_idx[:10]:
         cn = class_names[nearest_class[ii].item()] if nearest_class[ii].item() < len(class_names) else str(nearest_class[ii].item())
-        print(f"    [{ii:3d}] sim={max_sim_to_class[ii]:.4f} → {cn:20s}  '{CANDIDATE_CONCEPTS[ii]}'")
+        print(f"    [{ii:3d}] sim={max_sim_to_class[ii]:.4f} → {cn:20s}  '{candidates[ii]}'")
 
     mask1 = max_sim_to_class <= args.class_sim_thresh
     candidates_pass1 = all_embs[mask1]
-    concepts_pass1 = [CANDIDATE_CONCEPTS[i] for i in range(len(CANDIDATE_CONCEPTS)) if mask1[i]]
+    concepts_pass1 = [candidates[i] for i in range(len(candidates)) if mask1[i]]
     sims_pass1 = max_sim_to_class[mask1]
     nearest_pass1 = nearest_class[mask1]
     print(f"  Remaining after filter 1: {len(concepts_pass1)}")

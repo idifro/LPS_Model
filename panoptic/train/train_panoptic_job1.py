@@ -6,7 +6,7 @@ Extends train_panoptic_token.py with:
 - 216+ negative bank contrastive loss (L5/C1)
 - Multi-prompt template augmentation (T4)
 - [Job 1b] Camera CLIP distillation losses (L_O, L_V)
-- [Job 1c] CASD context-aware stuff targets + L7 voxel decomposition
+- [Job 1c] L_V broadcast (margin-gated THING) + L7 voxel decomposition (backbone InfoNCE)
 
 Usage:
     python -u panoptic/train/train_panoptic_job1.py --config panoptic/configs/job1a.yaml
@@ -272,11 +272,14 @@ def panoptic_inference_clip(pred_embed, pred_masks, text_protos, temperature,
     Q = pred_embed.shape[0]
     V = pred_masks.shape[0]
 
-    # Classify via cosine similarity
-    sim = pred_embed @ text_protos.T / temperature  # (Q, C)
-    scores, labels = sim.max(dim=-1)  # (Q,)
+    # Label by raw cosine argmax — avoids negative-score ranking artifacts
+    # that arise when dividing by small temperature (T=0.07 → 14× amplification).
+    raw_sim = pred_embed @ text_protos.T         # (Q, C) raw cosine, range [-1, 1]
+    labels = raw_sim.argmax(dim=-1)              # (Q,)
+    # Confidence: softmax over raw cosine — always positive, well-calibrated for ranking.
+    class_conf = raw_sim.softmax(dim=-1).max(dim=-1).values   # (Q,) in (0, 1)
 
-    # Apply objectness if available
+    scores = class_conf
     if objectness is not None:
         scores = scores * objectness.squeeze(-1).sigmoid()
 
@@ -298,8 +301,14 @@ def panoptic_inference_clip(pred_embed, pred_masks, text_protos, temperature,
         if mask.sum() < min_pts:
             continue
 
-        instance_id += 1
-        pan_seg[mask] = label * 1000 + instance_id
+        if label >= 10:
+            # Stuff class (0-indexed 10–15): merge all fragments into a single instance.
+            # Multiple predicted stuff segments for the same class would create extra FPs
+            # in the evaluator; standard panoptic evaluation treats stuff as one region.
+            pan_seg[mask] = label * 1000 + 1
+        else:
+            instance_id += 1
+            pan_seg[mask] = label * 1000 + instance_id
         used[mask] = True
 
     return pan_seg
@@ -401,10 +410,18 @@ def main():
         if unexpected:
             print(f"  Unexpected keys: {len(unexpected)}")
 
-        # Load LoRA adapters if available
-        if lora_adapters is not None and "lora_state" in warm_start_ckpt:
-            lora_adapters.load_state_dict(warm_start_ckpt["lora_state"], strict=False)
-            print(f"  LoRA adapters restored ({sum(p.numel() for p in lora_adapters.parameters())} params)")
+        # Load LoRA adapters if available.
+        # Checkpoints save under "lora_adapters"; older/external checkpoints may use "lora_state".
+        if lora_adapters is not None:
+            _lora_key = "lora_adapters" if "lora_adapters" in warm_start_ckpt else (
+                         "lora_state"   if "lora_state"   in warm_start_ckpt else None)
+            if _lora_key is not None:
+                lora_adapters.load_state_dict(warm_start_ckpt[_lora_key], strict=False)
+                print(f"  LoRA adapters restored from '{_lora_key}' "
+                      f"({sum(p.numel() for p in lora_adapters.parameters())} params)")
+            else:
+                print("  WARNING: LoRA adapters NOT found in warm-start checkpoint "
+                      f"(keys: {list(warm_start_ckpt.keys())}) — starting LoRA from init")
 
     # ── Losses ──
     # Panoptic loss (mask + dice + CE)
@@ -455,16 +472,31 @@ def main():
 
     distill_obj_loss = None
     distill_vox_loss = None
+    decomp_loss = None
     if get_nested(cfg, "distillation.enabled", False):
         from panoptic.losses.distill_object_loss import ObjectDistillLoss
         from panoptic.losses.distill_voxel_loss import VoxelDistillLoss
         distill_obj_loss = ObjectDistillLoss(
             loss_type=get_nested(cfg, "distillation.L_O.loss_type", "cosine"),
         ).to(device)
+        lv_mode = get_nested(cfg, "distillation.L_V.mode", "patch")
         distill_vox_loss = VoxelDistillLoss(
+            mode=lv_mode,
             loss_type=get_nested(cfg, "distillation.L_V.loss_type", "cosine"),
+            margin_gate_threshold=get_nested(cfg, "distillation.L_V.margin_gate_threshold", 0.0),
         ).to(device)
-        print(f"Distillation enabled: L_O + L_V")
+        print(f"Distillation enabled: L_O + L_V (mode={lv_mode})")
+
+    if get_nested(cfg, "voxel_decomp.enabled", False):
+        from panoptic.losses.voxel_decomp_loss import VoxelDecompLoss
+        decomp_loss = VoxelDecompLoss(
+            proto_path=base_protos_path,
+            neg_bank_path=get_nested(cfg, "token.negative_bank"),
+            temperature=get_nested(cfg, "voxel_decomp.temperature", 0.07),
+            n_sample=get_nested(cfg, "voxel_decomp.n_sample", 8192),
+        ).to(device)
+        print(f"Voxel decomp (L7) enabled: temperature={decomp_loss.temperature}, "
+              f"n_sample={decomp_loss.n_sample}, n_base={len(decomp_loss.base_ids)}")
 
     # ── Optimizer ──
     optimizer = build_optimizer(decoder, lora_adapters, cfg)
@@ -639,33 +671,79 @@ def main():
                     loss_token_val = loss_token.item()
                     total_loss = total_loss + token_weight * loss_token
 
-                # Distillation losses (Job 1b)
+                # Distillation losses (Job 1b/1c)
                 loss_lo_val = 0.0
                 loss_lv_val = 0.0
+                loss_l7_val = 0.0
+                count_novel_lo = 0
                 if distill_obj_loss is not None and "obj_clip_feats" in batch:
-                    obj_clip = batch["obj_clip_feats"].to(device).unsqueeze(0)
-                    obj_cls = batch["obj_clip_classes"].to(device).unsqueeze(0)
-                    vox_clip = batch["vox_clip_feats"].to(device).unsqueeze(0)
+                    obj_clip     = batch["obj_clip_feats"].to(device).unsqueeze(0)
+                    obj_cls      = batch["obj_clip_classes"].to(device).unsqueeze(0)
+                    vox_clip     = batch["vox_clip_feats"].to(device).unsqueeze(0)
                     vox_idx_clip = batch["vox_clip_indices"].to(device).unsqueeze(0)
+
+                    _ov = batch.get("obj_clip_valid")
+                    if _ov is not None:
+                        obj_valid = _ov.to(device).unsqueeze(0)   # (1, N_inst) bool
+                    else:
+                        obj_valid = (obj_clip.norm(dim=-1) > 0.1)
+
+                    _vgi = batch.get("vox_gt_instance_id")
+                    vox_gt_inst = _vgi.to(device).unsqueeze(0) if _vgi is not None else None
+
+                    _om = batch.get("obj_clip_margin", batch.get("obj_margin", None))
+                    obj_margin = _om.to(device).unsqueeze(0) if _om is not None else None
 
                     w_lo = get_loss_weight("L_O", epoch, cfg)
                     if w_lo > 0 and obj_clip.shape[1] > 0:
-                        # Use all-GT indices so novel-matched queries also get L_O supervision
+                        _NOVEL_LO = {2, 5, 6}
+                        _, gt_idx_all = indices_all[0]
+                        for _gi in gt_idx_all:
+                            _gi_i = int(_gi.item())
+                            _gt_cls = int(gt_classes_all[_gi_i].item())
+                            if (_gt_cls in _NOVEL_LO
+                                    and _gi_i < obj_valid.shape[1]
+                                    and obj_valid[0, _gi_i]):
+                                count_novel_lo += 1
+
                         loss_lo = distill_obj_loss(
-                            outputs["pred_embed"], obj_clip, obj_cls,
+                            outputs["pred_embed"], obj_clip, obj_cls, obj_valid,
                             indices_all, all_targets_obj
                         )
                         loss_lo_val = loss_lo.item()
                         total_loss = total_loss + w_lo * loss_lo
 
                     w_lv = get_loss_weight("L_V", epoch, cfg)
-                    if w_lv > 0:
-                        loss_lv = distill_vox_loss(
-                            outputs["pred_embed"], outputs["pred_masks"],
-                            vox_clip, vox_idx_clip
-                        )
+                    if w_lv > 0 and distill_vox_loss is not None:
+                        lv_mode = get_nested(cfg, "distillation.L_V.mode", "patch")
+                        if lv_mode == "broadcast":
+                            if vox_gt_inst is None or obj_margin is None:
+                                raise RuntimeError(
+                                    "broadcast L_V requires vox_gt_instance_id and "
+                                    "obj_clip_margin in batch — check dataset/npz files"
+                                )
+                            loss_lv = distill_vox_loss(
+                                outputs["pred_embed"], outputs["pred_masks"],
+                                vox_clip_indices=vox_idx_clip,
+                                obj_feats=obj_clip, obj_valid=obj_valid,
+                                obj_margin=obj_margin, obj_classes=obj_cls,
+                                vox_gt_instance_id=vox_gt_inst,
+                            )
+                        else:
+                            loss_lv = distill_vox_loss(
+                                outputs["pred_embed"], outputs["pred_masks"],
+                                vox_clip, vox_idx_clip,
+                            )
                         loss_lv_val = loss_lv.item()
                         total_loss = total_loss + w_lv * loss_lv
+
+                # L7: backbone InfoNCE (Job 1c)
+                w_l7 = get_loss_weight("L7", epoch, cfg)
+                if w_l7 > 0 and decomp_loss is not None:
+                    vox_sem_l7 = batch["gt_sem"].to(device)   # (V,) 0-indexed, 255=ignore
+                    loss_l7 = decomp_loss(feats[0], vox_sem_l7)
+                    loss_l7_val = loss_l7.item()
+                    total_loss = total_loss + w_l7 * loss_l7
 
                 total_loss = total_loss / grad_accum
 
@@ -705,7 +783,8 @@ def main():
                 print(f"[E{epoch:02d} S{step:04d}] loss={avg_loss:.4f} "
                       f"mask={loss_mask_val:.3f} dice={loss_dice_val:.3f} "
                       f"obj={loss_obj_val:.3f} token={loss_token_val:.3f} "
-                      f"lo={loss_lo_val:.3f} lv={loss_lv_val:.3f} "
+                      f"lo={loss_lo_val:.3f} lv={loss_lv_val:.3f} l7={loss_l7_val:.3f} "
+                      f"novel_lo={count_novel_lo} "
                       f"temp={temp_val:.3f} lora_gnorm={lora_gnorm:.4e} phase={'1' if is_phase1 else '2'}")
 
                 if use_wandb:
@@ -717,6 +796,8 @@ def main():
                         "train/loss_token": loss_token_val,
                         "train/loss_lo": loss_lo_val,
                         "train/loss_lv": loss_lv_val,
+                        "train/loss_l7": loss_l7_val,
+                        "train/count_novel_lo": count_novel_lo,
                         "train/token_weight": token_weight,
                         "train/temperature": temp_val,
                         "train/lora_gnorm": lora_gnorm,
@@ -794,11 +875,10 @@ def main():
                         voxel_embeds = mask_probs @ pred_embed  # (V, 768)
                         voxel_embeds = F.normalize(voxel_embeds, dim=-1)
                         # Similarity to zero-shot concepts
-                        zs_sim = voxel_embeds @ zs_protos.T  # (V, 4)
-                        zs_sim = zs_sim * temp
+                        zs_sim = voxel_embeds @ zs_protos.T  # (V, 4) raw cosine
                         # Count voxels where zero-shot concept is top match
-                        # (compare against all 16 base protos too)
-                        all_sim = voxel_embeds @ text_protos.T  # (V, 16)
+                        # (compare against all 16 base protos too — both raw cosine, no temperature)
+                        all_sim = voxel_embeds @ text_protos.T  # (V, 16) raw cosine
                         max_base_sim, _ = all_sim.max(dim=-1)  # (V,)
                         for zi in range(len(ZEROSHOT_CONCEPTS)):
                             above_base = zs_sim[:, zi] > max_base_sim
@@ -818,22 +898,25 @@ def main():
                     gt_classes = val_batch["gt_classes"].numpy()
                     V = len(gt_sem)
 
-                    # Build GT panoptic
-                    gt_pan = np.zeros(V, dtype=np.int64)
+                    # Build GT panoptic.
+                    # Initialize to -1 (void sentinel). Any voxel not covered by gt_masks
+                    # stays -1 and is excluded from evaluation to avoid polluting class-0
+                    # (barrier) with unlabeled/ignore-label lidar points.
+                    gt_pan = np.full(V, -1, dtype=np.int64)
                     for m_idx in range(len(gt_classes)):
                         cls = gt_classes[m_idx]
                         mask = gt_masks[m_idx]
                         gt_pan[mask] = cls * 1000 + (m_idx + 1)
 
-                    pred_sem = pan_pred.cpu().numpy() // 1000
-                    pred_inst = pan_pred.cpu().numpy() % 1000
-                    gt_sem_eval = gt_pan // 1000
-                    gt_inst_eval = gt_pan % 1000
+                    valid_vox = gt_pan >= 0
 
-                    evaluator.addBatch(pred_sem.astype(np.int32),
-                                       pred_inst.astype(np.int32),
-                                       gt_sem_eval.astype(np.int32),
-                                       gt_inst_eval.astype(np.int32))
+                    pred_np   = pan_pred.cpu().numpy()
+                    pred_sem  = (pred_np[valid_vox] // 1000).astype(np.int32)
+                    pred_inst = (pred_np[valid_vox] % 1000).astype(np.int32)
+                    gt_sem_eval  = (gt_pan[valid_vox] // 1000).astype(np.int32)
+                    gt_inst_eval = (gt_pan[valid_vox] % 1000).astype(np.int32)
+
+                    evaluator.addBatch(pred_sem, pred_inst, gt_sem_eval, gt_inst_eval)
 
             pq_mean, sq_mean, rq_mean, pq_per, sq_per, rq_per = evaluator.getPQ()
 

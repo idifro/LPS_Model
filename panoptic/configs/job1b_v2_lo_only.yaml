@@ -1,0 +1,89 @@
+# Job 1b v2 Ablation A: L_O only (L_V disabled) — 15 epochs on v1.0-trainval
+# Warm-start from job1a_v2 best checkpoint
+# Gate 9: novel PQ > 0.05 at final epoch
+
+data:
+  dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes
+  version: v1.0-trainval
+  voxel_size: 0.05
+
+model:
+  backbone_ckpt: models/nuscenes_openseg.pth.tar
+  backbone_dim: 768
+  hidden_dim: 256
+  num_classes: 16
+  num_thing_queries: 100
+  num_stuff_classes: 6
+  nheads: 8
+  dim_feedforward: 1024
+  num_blocks: 3
+  num_levels: 3
+  dropout: 0.0
+  clip_embed_dim: 768
+  head_type: single_clip
+
+lora:
+  enabled: true
+  rank: 16
+  dropout: 0.05
+
+warm_start:
+  checkpoint: panoptic/checkpoints_job1a_v2/best.pth
+
+loss:
+  cost_class: 0.0
+  cost_mask: 5.0
+  cost_dice: 5.0
+  eos_coef: 0.1
+  weight_ce: 0.0
+  weight_mask: 5.0
+  weight_dice: 5.0
+  weight_obj: 2.0
+  p_ratio: 0.75
+
+token:
+  prototype_path: panoptic/clip_prototypes/text_prototypes_vitl14_224_v2.pt
+  negative_bank: panoptic/clip_prototypes/negative_bank_v2.pt
+  multiprompt_path: panoptic/clip_prototypes/text_prototypes_vitl14_224_multiprompt_v2.pt
+  learnable_temperature: true
+  temp_max: 5.0
+  margin: 0.1
+  weight: 1.0
+  restore_from_warm_start: true
+
+distillation:
+  enabled: true
+  clip_feat_dir: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/clip_features_v2
+  L_O:
+    weight: 1.0
+    warmup_epochs: 2
+    loss_type: cosine
+  L_V:
+    weight: 0.0
+    warmup_epochs: 3
+    loss_type: cosine
+
+training:
+  lr_decoder: 3.0e-5
+  lr_token_head: 5.0e-5
+  lr_lora: 5.0e-5
+  weight_decay: 0.01
+  epochs: 15
+  warmup_epochs: 2
+  min_lr: 1.0e-6
+  mixed_precision: true
+  grad_accum: 8
+  grad_clip: 0.5
+  num_workers: 0
+  phase1_epochs: 2
+
+logging:
+  log_every: 50
+  eval_every: 2
+  wandb_enabled: true
+  wandb_project: openscene-panoptic
+  wandb_run_name: job1b-v2-lo-only
+
+checkpoint:
+  save_dir: panoptic/checkpoints_job1b_v2_lo
+  save_every: 2

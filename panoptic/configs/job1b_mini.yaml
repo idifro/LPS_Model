@@ -1,4 +1,8 @@
-# Job 1b Mini: Smoke test for distillation on v1.0-mini
+# Job 1b Mini: Smoke test on v1.0-mini
+# Warm-start from job1a_v1 trainval checkpoint (same weights as full job1b)
+# 5 epochs, distillation enabled, L_O + L_V with increased weights
+# Phase 1 (epoch 1): foundation only — decoder frozen, no distillation
+# Phase 2 (epochs 2-5): full distillation with warmup
 
 data:
   dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes_mini
@@ -26,7 +30,7 @@ lora:
   dropout: 0.05
 
 warm_start:
-  checkpoint: panoptic/checkpoints_job1a_mini/best.pth
+  checkpoint: panoptic/checkpoints_job1a_v1/best.pth
 
 loss:
   cost_class: 0.0
@@ -40,22 +44,22 @@ loss:
   p_ratio: 0.75
 
 token:
-  prototype_path: panoptic/clip_prototypes/text_prototypes_vitl14_224.pt
-  negative_bank: panoptic/clip_prototypes/negative_bank_200.pt
-  multiprompt_path: panoptic/clip_prototypes/text_prototypes_vitl14_224_multiprompt.pt
+  prototype_path: panoptic/clip_prototypes/text_prototypes_vitl14_224_v2.pt
+  negative_bank: panoptic/clip_prototypes/negative_bank_v2.pt
+  multiprompt_path: panoptic/clip_prototypes/text_prototypes_vitl14_224_multiprompt_v2.pt
   learnable_temperature: true
   weight: 1.0
 
 distillation:
   enabled: true
-  clip_feat_dir: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/clip_features
+  clip_feat_dir: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/clip_features_v2
   L_O:
-    weight: 1.0
-    warmup_epochs: 1
+    weight: 0.5
+    warmup_epochs: 2
     loss_type: cosine
   L_V:
-    weight: 0.1
-    warmup_epochs: 2
+    weight: 0.0
+    warmup_epochs: 3
     loss_type: cosine
 
 training:
@@ -63,21 +67,21 @@ training:
   lr_token_head: 5.0e-5
   lr_lora: 5.0e-5
   weight_decay: 0.01
-  epochs: 3
+  epochs: 10
   warmup_epochs: 1
   min_lr: 1.0e-6
   mixed_precision: true
   grad_accum: 2
   grad_clip: 0.5
   num_workers: 0
-  phase1_epochs: 1
+  phase1_epochs: 2
 
 logging:
   log_every: 10
   eval_every: 1
   wandb_enabled: true
   wandb_project: openscene-panoptic
-  wandb_run_name: job1b-mini-smoke
+  wandb_run_name: job1b-mini-smoke-v1
 
 checkpoint:
   save_dir: panoptic/checkpoints_job1b_mini

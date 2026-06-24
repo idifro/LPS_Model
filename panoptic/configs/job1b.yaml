@@ -28,7 +28,7 @@ lora:
   dropout: 0.05
 
 warm_start:
-  checkpoint: panoptic/checkpoints_job1a/best.pth
+  checkpoint: panoptic/checkpoints_job1a_v1/best.pth
 
 loss:
   cost_class: 0.0
@@ -42,21 +42,21 @@ loss:
   p_ratio: 0.75
 
 token:
-  prototype_path: panoptic/clip_prototypes/text_prototypes_vitl14_224.pt
-  negative_bank: panoptic/clip_prototypes/negative_bank_200.pt
-  multiprompt_path: panoptic/clip_prototypes/text_prototypes_vitl14_224_multiprompt.pt
+  prototype_path: panoptic/clip_prototypes/text_prototypes_vitl14_224_v2.pt
+  negative_bank: panoptic/clip_prototypes/negative_bank_v2.pt
+  multiprompt_path: panoptic/clip_prototypes/text_prototypes_vitl14_224_multiprompt_v2.pt
   learnable_temperature: true
   weight: 1.0
 
 distillation:
   enabled: true
-  clip_feat_dir: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/clip_features
+  clip_feat_dir: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/clip_features_v2
   L_O:
-    weight: 1.0
+    weight: 0.5
     warmup_epochs: 2
     loss_type: cosine
   L_V:
-    weight: 0.5
+    weight: 0.0
     warmup_epochs: 3
     loss_type: cosine
 

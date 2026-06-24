@@ -1,0 +1,78 @@
+# Job 1a v2: LoRA + SingleCLIPHead (A4) + C1 TokenLoss + T4 MultiPrompt
+# v2 neg-bank (161 entries, all max-sim < 0.75) + v2 prompts (moto margin=0.1597)
+# 12 epochs on v1.0-trainval (reduced from 20 for compute budget)
+# 2 phase1 (freeze decoder base) + 10 phase2 (all trainable)
+
+data:
+  dataroot: /fs/scratch/SX_ETL3_GenAI_Team/mha2cob/nuscenes
+  version: v1.0-trainval
+  voxel_size: 0.05
+
+model:
+  backbone_ckpt: models/nuscenes_openseg.pth.tar
+  backbone_dim: 768
+  hidden_dim: 256
+  num_classes: 16
+  num_thing_queries: 100
+  num_stuff_classes: 6
+  nheads: 8
+  dim_feedforward: 1024
+  num_blocks: 3
+  num_levels: 3
+  dropout: 0.0
+  clip_embed_dim: 768
+  head_type: single_clip
+
+lora:
+  enabled: true
+  rank: 16
+  dropout: 0.05
+
+warm_start:
+  checkpoint: panoptic/checkpoints_token_full_v2/best.pth
+
+loss:
+  cost_class: 0.0
+  cost_mask: 5.0
+  cost_dice: 5.0
+  eos_coef: 0.1
+  weight_ce: 0.0
+  weight_mask: 5.0
+  weight_dice: 5.0
+  weight_obj: 2.0
+  p_ratio: 0.75
+
+token:
+  prototype_path: panoptic/clip_prototypes/text_prototypes_vitl14_224_v2.pt
+  negative_bank: panoptic/clip_prototypes/negative_bank_v2.pt
+  multiprompt_path: panoptic/clip_prototypes/text_prototypes_vitl14_224_multiprompt_v2.pt
+  learnable_temperature: true
+  temp_max: 5.0
+  margin: 0.1
+  weight: 1.0
+  restore_from_warm_start: false
+
+training:
+  lr_decoder: 5.0e-5
+  lr_token_head: 1.0e-4
+  lr_lora: 1.0e-4
+  weight_decay: 0.01
+  epochs: 12
+  warmup_epochs: 2
+  min_lr: 1.0e-6
+  mixed_precision: true
+  grad_accum: 8
+  grad_clip: 0.5
+  num_workers: 0
+  phase1_epochs: 2
+
+logging:
+  log_every: 50
+  eval_every: 2
+  wandb_enabled: true
+  wandb_project: openscene-panoptic
+  wandb_run_name: job1a-v2-lora-c1
+
+checkpoint:
+  save_dir: panoptic/checkpoints_job1a_v2
+  save_every: 1

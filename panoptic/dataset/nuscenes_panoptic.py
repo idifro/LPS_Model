@@ -342,18 +342,34 @@ class NuScenesPanoptic(Dataset):
             if os.path.exists(feat_path):
                 data = np.load(feat_path)
                 result["obj_clip_feats"] = torch.from_numpy(
-                    data["obj_feats"].astype(np.float32))       # (N_inst, 768)
+                    data["obj_feats"].astype(np.float32))        # (N_inst, 768)
                 result["obj_clip_classes"] = torch.from_numpy(
-                    data["obj_classes"].astype(np.int64))        # (N_inst,)
+                    data["obj_classes"].astype(np.int64))         # (N_inst,)
+                result["obj_clip_valid"] = torch.from_numpy(
+                    data["obj_valid"].astype(np.bool_))           # (N_inst,)
                 result["vox_clip_feats"] = torch.from_numpy(
-                    data["vox_feats"].astype(np.float32))        # (4096, 768)
+                    data["vox_feats"].astype(np.float32))         # (4096, 768)
                 result["vox_clip_indices"] = torch.from_numpy(
-                    data["vox_indices"].astype(np.int64))         # (4096,)
+                    data["vox_indices"].astype(np.int64))          # (4096,)
+                if "vox_gt_instance_id" in data:
+                    result["vox_gt_instance_id"] = torch.from_numpy(
+                        data["vox_gt_instance_id"].astype(np.int64))  # (4096,)
+                else:
+                    result["vox_gt_instance_id"] = torch.full((4096,), -1, dtype=torch.long)
+                n_inst = len(data["obj_classes"])
+                if "obj_margin" in data:
+                    result["obj_clip_margin"] = torch.from_numpy(
+                        data["obj_margin"].astype(np.float32))   # (N_inst,)
+                else:
+                    result["obj_clip_margin"] = torch.zeros(n_inst, dtype=torch.float32)
             else:
                 # Fallback: zeros (sample will contribute no distillation loss)
                 result["obj_clip_feats"] = torch.zeros(0, 768)
                 result["obj_clip_classes"] = torch.zeros(0, dtype=torch.long)
+                result["obj_clip_valid"] = torch.zeros(0, dtype=torch.bool)
+                result["obj_clip_margin"] = torch.zeros(0, dtype=torch.float32)
                 result["vox_clip_feats"] = torch.zeros(4096, 768)
                 result["vox_clip_indices"] = torch.zeros(4096, dtype=torch.long)
+                result["vox_gt_instance_id"] = torch.full((4096,), -1, dtype=torch.long)
 
         return result

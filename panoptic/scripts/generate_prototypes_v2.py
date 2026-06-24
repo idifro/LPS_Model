@@ -46,10 +46,10 @@ NUSCENES_CLASS_NAMES = [
 # Discriminative multi-prompt templates.
 # Goals:
 #   - barrier:    distinctive from manmade/wall  → emphasize roadside placement
-#   - bicycle:    distinctive from motorcycle    → emphasize non-motorized, pedal
+#   - bicycle:    distinctive from motorcycle    → emphasize pedals, chain, thin frame, no engine
 #   - bus:        distinctive from truck         → emphasize many passengers, transit
-#   - motorcycle: distinctive from bicycle       → emphasize motorized, engine, two-wheel
-#   - pedestrian: distinctive from motorcycle    → emphasize human on foot
+#   - motorcycle: distinctive from bicycle       → emphasize engine block, exhaust, fuel tank, heavy chassis
+#   - pedestrian: distinctive from sidewalk/env  → emphasize human figure, not scene context
 #   - terrain:    distinctive from vegetation    → emphasize bare ground, no leaves
 #   - vegetation: distinctive from terrain       → emphasize green, leafy, organic
 # ──────────────────────────────────────────────────────────────────────────────
@@ -67,16 +67,16 @@ CLASS_PROMPTS = {
         "a median barrier on a highway",
     ],
     "bicycle": [
-        "a bicycle in a driving scene",
-        "a non-motorized bicycle on a road",
-        "a pedal-powered bicycle in an urban scene",
-        "a bicycle without an engine on a street",
-        "a human-powered bicycle in traffic",
-        "a push bike in a city environment",
-        "a bicycle ridden by pedaling in a scene",
-        "a pedal bicycle parked or moving",
-        "a human-powered two-wheeled bicycle",
-        "a bicycle with pedals and no motor",
+        "a bicycle with pedals and a chain drive",
+        "a bicycle with thin frame, pedals, and no engine",
+        "a pedal bicycle with chain and sprocket",
+        "a lightweight bicycle with pedals and spokes",
+        "a bicycle frame with handlebars and pedals",
+        "a non-motorized bicycle with pedal cranks",
+        "a bicycle with thin wheels and pedal drive",
+        "a manual bicycle with no engine or exhaust",
+        "a human-powered bicycle with chain and pedals",
+        "a pedal-driven bicycle with thin spoked wheels",
     ],
     "bus": [
         "a bus in a driving scene",
@@ -115,28 +115,28 @@ CLASS_PROMPTS = {
         "a worksite vehicle in an urban driving scene",
     ],
     "motorcycle": [
-        "a motorcycle in a driving scene",
-        "a motorized two-wheeled vehicle on a road",
-        "a motorbike with an engine in an urban scene",
-        "a gas-powered motorcycle in traffic",
-        "a motorcycle or motorbike on a street",
-        "an engine-powered two-wheeled motorcycle",
-        "a motorcycle ridden in a city",
-        "a motorized motorbike in a driving scene",
-        "a two-wheeled motor vehicle in traffic",
-        "a motorcycle with an engine seen from a car",
+        "a motorcycle with an engine block and exhaust pipe",
+        "a motorcycle with a fuel tank and heavy chassis",
+        "a motorcycle with engine, exhaust, and kickstand",
+        "a gas-powered motorcycle with visible engine components",
+        "a motorcycle with a large engine and exhaust system",
+        "a motorcycle engine and fuel tank on a road",
+        "a heavy motorized motorcycle with exhaust pipes",
+        "a motorcycle with engine block seen from a vehicle",
+        "a powered motorcycle with fuel tank in traffic",
+        "a motorcycle with mechanical engine parts in a scene",
     ],
     "pedestrian": [
         "a pedestrian in a driving scene",
-        "a person walking on a road or sidewalk",
-        "a person on foot in an urban environment",
-        "a pedestrian crossing a street",
-        "a walking person seen from a vehicle",
-        "a person standing or walking in traffic",
-        "a human pedestrian in a city scene",
-        "a person walking in an urban driving scene",
-        "a person on foot near a road",
-        "a pedestrian in a city environment",
+        "a human figure walking in an urban environment",
+        "a person on foot in city traffic",
+        "a walking human seen from a vehicle",
+        "a person standing upright in a driving scene",
+        "a human body walking near a road",
+        "a person in motion on a street",
+        "a human pedestrian figure in traffic",
+        "a person walking independently in a scene",
+        "a human figure on foot in an urban area",
     ],
     "traffic cone": [
         "a traffic cone in a driving scene",
@@ -304,7 +304,7 @@ def main():
     for a, b, label in fragile_pairs:
         sim = (class_embs[a] @ class_embs[b]).item()
         margin = 1.0 - sim
-        flag = "  ← FRAGILE" if margin < 0.12 else ""
+        flag = "  ← FRAGILE" if margin < 0.09 else ""
         print(f"  {label:<30}: sim={sim:.4f}  margin={margin:.4f}{flag}")
 
     # Save averaged prototypes
